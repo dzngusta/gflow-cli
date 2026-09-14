@@ -218,7 +218,10 @@ entries under `## [<NEW_VERSION>]`, re-run steps 4, **4b** and 10 — 4b because
 newcomers are user-facing features that just entered this release and each needs its
 `LIVE_VERIFICATION_v<NEW_VERSION>.md` row (v0.68.0 shipped #672 this way and the ledger
 had no row until a reviewer supplied one) — amend or add to the step 11 commit, and only
-then tag. If a tag was already created locally, `git tag -d v<NEW_VERSION>` and re-sign
+then tag. **Exception:** if the only newcomers are `docs(sponsors): refresh hall of fame`
+commits from `.github/workflows/sponsors.yml` (a daily bot that cannot see a release
+freeze), `git merge origin/develop` and move on — they carry no `[Unreleased]` entry, no
+4b row and nothing to re-verify. If a tag was already created locally, `git tag -d v<NEW_VERSION>` and re-sign
 it on the merged head — this is safe only while the tag is unpushed (see the **NEVER
 force-push a release tag** reminder below). `develop` can still move between this check
 and the step 13 push; that cannot corrupt the tag, it only means a late commit ships in

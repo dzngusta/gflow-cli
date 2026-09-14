@@ -46,13 +46,16 @@ jobs:
           ref: develop
           persist-credentials: false
 
-      - name: Regenerate the hall of fame and the website mirror
+      - name: Regenerate the hall of fame
         if: env.HAS_TOKEN == 'true'
         env:
           GH_TOKEN: ${{ secrets.SPONSORS_READ_TOKEN }}
-        run: |
-          python3 scripts/ci/update_sponsors.py
-          python3 scripts/ci/generate_website_docs.py
+        run: python3 scripts/ci/update_sponsors.py
+
+      - name: Regenerate the website mirror
+        # Its own step so the sponsors token never reaches a script that does not need it.
+        if: env.HAS_TOKEN == 'true'
+        run: python3 scripts/ci/generate_website_docs.py
 
       - name: Commit when the list changed
         if: env.HAS_TOKEN == 'true'
@@ -67,7 +70,8 @@ jobs:
             exit 0
           fi
           allowed='^(README\.md|docs/SPONSORS\.md|website/docs/SPONSORS\.md)$'
-          if printf '%s\n' "$changed" | grep -vqE "$allowed"; then
+          # Not `grep -q`: an early exit could SIGPIPE printf and, under pipefail, skip the guard.
+          if printf '%s\n' "$changed" | grep -vE "$allowed" >/dev/null; then
             echo "::error::Refusing to commit: files outside the hall of fame changed:"
             printf '%s\n' "$changed" | grep -vE "$allowed"
             exit 1

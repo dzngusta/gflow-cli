@@ -27,7 +27,6 @@ def node(
     active: bool = True,
     privacy: str = "PUBLIC",
     name: str | None = None,
-    org: bool = False,
     since: str = "2026-09-01T00:00:00Z",
     avatar: str = AVATAR,
 ) -> dict[str, Any]:
@@ -38,7 +37,6 @@ def node(
         "privacyLevel": privacy,
         "tier": None if amount is None else {"monthlyPriceInDollars": amount},
         "sponsorEntity": {
-            "__typename": "Organization" if org else "User",
             "login": login,
             "name": name,
             "avatarUrl": avatar,
@@ -64,14 +62,21 @@ def placements(*nodes: dict[str, Any]) -> dict[str, list[str]]:
         (node(amount=1000, one_time=True), "backer"),
         (node(amount=250, active=False), "past"),
         (node(amount=None), "supporter"),
+        (node(amount=999), "silver"),
+        (node(amount=249), "bronze"),
+        (node(amount=99), "backer"),
+        (node(amount=14), "supporter"),
+        (node(amount=99, one_time=True), "supporter"),
     ],
 )
 def test_placement_follows_the_published_tiers(sponsorship: dict[str, Any], expected: str) -> None:
     assert placements(sponsorship) == {expected: ["someone"]}
 
 
-def test_private_sponsorships_are_never_rendered() -> None:
-    sponsors = us.parse([node("hidden", privacy="PRIVATE"), node("shown")])
+@pytest.mark.parametrize("privacy", ["PRIVATE", "UNKNOWN", ""])
+def test_only_public_sponsorships_are_ever_rendered(privacy: str) -> None:
+    # An allowlist, not a denylist: a privacy level GitHub adds later must stay hidden.
+    sponsors = us.parse([node("hidden", privacy=privacy), node("shown")])
 
     assert [s.login for s in sponsors] == ["shown"]
     assert "hidden" not in us.render(sponsors)
@@ -104,6 +109,7 @@ def test_empty_hall_of_fame_invites_the_first_sponsor() -> None:
     block = us.render([])
 
     assert "No sponsors yet" in block
+    assert "every public sponsor" in block
     assert (
         "https://github.com/sponsors/ffroliva/sponsorships?frequency=one-time&amp;amount=5" in block
     )
@@ -113,7 +119,7 @@ def test_render_uses_logos_avatars_and_names_by_group() -> None:
     block = us.render(
         us.parse(
             [
-                node("acme", amount=1000, org=True, name="Acme"),
+                node("acme", amount=1000, name="Acme"),
                 node("backer", amount=15),
                 node("friend", amount=5, name="A Friend"),
                 node("former", amount=5, active=False),
@@ -136,11 +142,28 @@ def test_render_uses_logos_avatars_and_names_by_group() -> None:
     assert "No sponsors yet" not in block
 
 
-def test_sponsor_names_cannot_inject_markup() -> None:
-    block = us.render(us.parse([node("mallory", name='<script>x</script>"><img src=x>')]))
+@pytest.mark.parametrize("amount", [5, 15])
+def test_sponsor_names_cannot_inject_markup(amount: int) -> None:
+    # $5 renders the name as link text; $15 puts it inside an <img alt="..."> attribute.
+    block = us.render(
+        us.parse(
+            [node("mallory", amount=amount, name='<script>x</script>" onerror="x"><img src=x>')]
+        )
+    )
 
     assert "<script>" not in block
+    assert '" onerror=' not in block
+    assert '"><img src=x>' not in block
     assert "&lt;script&gt;" in block
+    assert "&quot;" in block
+
+
+def test_line_breaks_in_names_cannot_end_the_html_block() -> None:
+    # A blank line ends a raw HTML block in CommonMark, letting the rest render as markdown.
+    block = us.render(us.parse([node("m", name="x\n\n[phish](https://evil.example)")]))
+
+    assert "\n\n[phish]" not in block
+    assert '<a href="https://github.com/m">x [phish](https://evil.example)</a>' in block
 
 
 def test_avatars_from_unexpected_hosts_fall_back_to_a_name() -> None:
@@ -152,9 +175,9 @@ def test_avatars_from_unexpected_hosts_fall_back_to_a_name() -> None:
     assert '<a href="https://github.com/acme">acme</a>' in block
 
 
-def test_invalid_logins_are_skipped() -> None:
-    assert us.parse([node("bad login/../x"), node("ok")])[0].login == "ok"
-    assert len(us.parse([node("bad login/../x")])) == 0
+@pytest.mark.parametrize("login", ["bad login/../x", "a" * 40, "trailing\n", "-leading"])
+def test_invalid_logins_are_skipped(login: str) -> None:
+    assert [s.login for s in us.parse([node(login), node("ok")])] == ["ok"]
 
 
 def test_replace_block_is_idempotent_and_keeps_surrounding_text() -> None:
@@ -217,7 +240,9 @@ def test_main_rewrites_every_target_and_reports_changes(
 
     assert us.main(root=tmp_path, runner=runner) == 0
     for relative in us.TARGETS:
-        assert "friend" in (tmp_path / relative).read_text(encoding="utf-8")
+        raw = (tmp_path / relative).read_bytes()
+        assert b"friend" in raw
+        assert b"\r\n" not in raw
     assert "updated" in capsys.readouterr().out
 
     assert us.main(root=tmp_path, runner=runner) == 0
@@ -228,5 +253,4 @@ def test_main_rewrites_every_target_and_reports_changes(
 def test_shipped_pages_carry_exactly_one_hall_of_fame_block(relative: str) -> None:
     text = (Path(__file__).resolve().parents[2] / relative).read_text(encoding="utf-8")
 
-    assert text.count(us.START) == 1
-    assert text.count(us.END) == 1
+    assert us.replace_block(text, "probe").count(us.START) == 1

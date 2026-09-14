@@ -29,6 +29,7 @@ for both:
 buys order, not exclusivity: a fix that affects everyone ships for everyone. Need an invoice or
 custom terms? Get in touch through the maintainer's GitHub profile.
 
+A custom amount is placed by the highest tier it reaches. A "logo" is the sponsor's GitHub avatar.
 One-time sponsors stay in the hall of fame for good. A monthly sponsor who stops moves to
 "Past sponsors".
 
@@ -36,10 +37,12 @@ One-time sponsors stay in the hall of fame for good. A monthly sponsor who stops
 
 Refreshed daily from GitHub Sponsors by `.github/workflows/sponsors.yml`. Only sponsors who chose
 to sponsor **publicly** are listed; a private sponsorship never appears here or anywhere else in
-this repository. Names and avatars come from each sponsor's GitHub profile.
+this repository. Names and avatars come from each sponsor's GitHub profile. If a sponsor later
+switches to private, they drop off the next refresh; earlier versions of this page stay in the git
+history, where they were already public.
 
 <!-- sponsors:start -->
-No sponsors yet. <a href="https://github.com/sponsors/ffroliva/sponsorships?frequency=one-time&amp;amount=5">Be the first</a> — every sponsor is listed here.
+No sponsors yet. <a href="https://github.com/sponsors/ffroliva/sponsorships?frequency=one-time&amp;amount=5">Be the first</a> — every public sponsor is listed here.
 <!-- sponsors:end -->
 
 ## Found a bug, or patched gflow-cli in your fork?

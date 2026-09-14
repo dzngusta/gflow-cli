@@ -59,7 +59,6 @@ query($login: String!, $cursor: String) {
         createdAt isActive isOneTimePayment privacyLevel
         tier { monthlyPriceInDollars }
         sponsorEntity {
-          __typename
           ... on User { login name avatarUrl(size: 240) }
           ... on Organization { login name avatarUrl(size: 240) }
         }
@@ -94,8 +93,9 @@ class Sponsor:
 
 
 def run_gh(args: Sequence[str]) -> str:
+    # stderr is not captured, so gh's own reason (expired token, missing scope) reaches the log.
     return subprocess.run(
-        ["gh", *args], capture_output=True, text=True, encoding="utf-8", check=True
+        ["gh", *args], stdout=subprocess.PIPE, text=True, encoding="utf-8", check=True
     ).stdout
 
 
@@ -120,13 +120,14 @@ def parse(nodes: list[dict[str, Any]]) -> list[Sponsor]:
         if n.get("privacyLevel") != "PUBLIC" or not entity:
             continue  # private sponsorship, or the sponsor's account was deleted
         login = entity.get("login") or ""
-        if not _LOGIN.match(login):
+        if not _LOGIN.fullmatch(login):
             continue
         avatar = entity.get("avatarUrl") or ""
         sponsors.append(
             Sponsor(
                 login=login,
-                display_name=entity.get("name") or login,
+                # Collapsed: a blank line in a name would end the raw HTML block in markdown.
+                display_name=" ".join((entity.get("name") or login).split()),
                 avatar_url=avatar if avatar.startswith(_AVATAR_HOST) else None,
                 amount_usd=(n.get("tier") or {}).get("monthlyPriceInDollars") or 0,
                 one_time=bool(n.get("isOneTimePayment")),
@@ -138,13 +139,13 @@ def parse(nodes: list[dict[str, Any]]) -> list[Sponsor]:
 
 
 def group(sponsors: list[Sponsor]) -> dict[str, list[Sponsor]]:
+    def rank(s: Sponsor) -> tuple[int, int]:
+        return _RANK[s.placement], -s.amount_usd
+
     best: dict[str, Sponsor] = {}
     for s in sponsors:
         current = best.get(s.login)
-        if current is None or (_RANK[s.placement], -s.amount_usd) < (
-            _RANK[current.placement],
-            -current.amount_usd,
-        ):
+        if current is None or rank(s) < rank(current):
             best[s.login] = s
     groups: dict[str, list[Sponsor]] = {key: [] for key, _, _ in GROUPS}
     for s in best.values():
@@ -154,16 +155,13 @@ def group(sponsors: list[Sponsor]) -> dict[str, list[Sponsor]]:
     return groups
 
 
-def _profile(s: Sponsor) -> str:
-    return f"https://github.com/{s.login}"
-
-
 def _entry(s: Sponsor, width: int | None) -> str:
+    profile = f"https://github.com/{s.login}"
     name = html.escape(s.display_name)
     if width is None or s.avatar_url is None:
-        return f'<a href="{_profile(s)}">{name}</a>'
+        return f'<a href="{profile}">{name}</a>'
     src = html.escape(s.avatar_url)
-    return f'<a href="{_profile(s)}"><img src="{src}" width="{width}" alt="{name}"></a>'
+    return f'<a href="{profile}"><img src="{src}" width="{width}" alt="{name}"></a>'
 
 
 def render(sponsors: list[Sponsor]) -> str:
@@ -172,7 +170,7 @@ def render(sponsors: list[Sponsor]) -> str:
         one_time = html.escape(f"{_CHECKOUT}?frequency=one-time&amount=5")
         return (
             "No sponsors yet. "
-            f'<a href="{one_time}">Be the first</a> — every sponsor is listed here.'
+            f'<a href="{one_time}">Be the first</a> — every public sponsor is listed here.'
         )
     sections: list[str] = []
     for key, heading, width in GROUPS:
@@ -202,7 +200,7 @@ def main(root: Path = _REPO, runner: Runner = run_gh) -> int:
         if after == before:
             print(f"unchanged: {relative}")
             continue
-        path.write_text(after, encoding="utf-8")
+        path.write_text(after, encoding="utf-8", newline="\n")
         print(f"updated: {relative}")
     return 0
 

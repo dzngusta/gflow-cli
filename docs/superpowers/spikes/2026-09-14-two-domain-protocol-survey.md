@@ -98,6 +98,12 @@ Both entry points, both runs, landing on `flow.google.com/about`. Its inability 
 project is **not transient**, corroborating
 [about-redirect-is-stable-for-an-account](2026-09-11-about-redirect-is-stable-for-an-account.md).
 
+> **This note is #1 of three, and its two open holes are now closed.** It only loaded root
+> and idle pages, and said so. Both generation paths were measured afterwards:
+> [#2 — the image path is one held response, no push and no poll](2026-09-14-generation-wire-no-push-channel.md),
+> and [#3 — the video path polls on a fixed 5.00 s client timer, and nothing signals it](2026-09-14-video-poll-is-a-fixed-client-timer.md).
+> Read all three before citing "no push channel on Flow": this one alone does not establish it.
+
 ## What this changes
 
 **"labs-only" is not a testable capability axis on the profiles surveyed.** labs 308s to

@@ -5,7 +5,9 @@ quota only. No video.
 **Script:** [`spike_generation_wire_survey.py`](../../../scripts/dev/spike_generation_wire_survey.py)
 — committed in `ac8bd2b2`, **before any data existed**, so the pre-registered reading is
 checkable by anyone.
-**Evidence:** `scripts/dev/_spike_out/generation_wire_ffroliva_*.json` (gitignored)
+**Evidence:** `scripts/dev/_spike_out/generation_wire_ffroliva_*.json` (gitignored) — that is
+the name these runs wrote; the script now writes `generation_wire_image_*` / `_video_*`, so a
+re-run lands under the new name, not this one.
 **Design:** profile `ffroliva`, one real project, **2 runs**, full submit→completion
 lifecycle instrumented.
 
@@ -66,7 +68,8 @@ not stronger. Images use a **held response**; video uses a **poll loop** (`jwpdu
 in `migrated_composer.py`). Those are different mechanisms, so an absence on one is not an
 absence on the other.
 
-**The video path remains unmeasured for push.** Settling it costs Veo credits. Given images
+**The video path remains unmeasured for push.** ⛔ **SUPERSEDED — it was measured the same
+day; see the block below this paragraph.** Settling it costs Veo credits. Given images
 resolve in a single held call, the question worth paying for is narrow and specific: *does
 anything arrive between `jwpduf` polls, and are the polls a client timer or a reaction?* The
 same script answers it with `--runs 1` pointed at a video request.

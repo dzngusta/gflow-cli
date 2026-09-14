@@ -50,7 +50,8 @@ the data exists, because survey #1 could not prove that ordering and said so:
   * A streaming content-type on a generation route
     -> progress may be readable without polling at all.
   * Poll gaps are uniform
-    -> a fixed client timer; latency is ours to tune.
+    -> a fixed client timer, and it is FLOW'S page that owns it, not us. There is no
+       push to find; the interval is a floor we observe, not a knob we hold.
   * Poll gaps collapse near completion
     -> something signalled the client. Find it before claiming push is absent.
   * Submit fails / quota exhausted / the composer never loads
@@ -66,8 +67,11 @@ reaction?* The image answer cannot settle it (see above), so only these readings
 apply to the video path:
 
   * Poll gaps between consecutive `jwpduf` calls are UNIFORM
-    -> a client-side timer we already own. `migrated_composer.py` is doing the only
-       thing available; latency is ours to tune, and nothing signals the page.
+    -> a client-side timer, owned by FLOW'S page — `migrated_composer.py` only
+       observes it and adds no traffic. Nothing signals the page, and the interval is
+       a floor we read rather than a latency knob we hold. Measure the gaps between
+       request DISPATCHES, not arrivals: arrival spacing carries network jitter and
+       cannot separate a timer from a cadence that reacts to each reply.
   * Poll gaps COLLAPSE near completion (or one gap is far shorter than the rest)
     -> something told the client. Push is NOT absent on this path until that
        something is identified. Record what arrived immediately before the short gap.
@@ -83,24 +87,28 @@ apply to the video path:
        instrument was rebuilt mid-spike.
   * Submit refused, credits short, composer never loads, or the run times out
     -> **UNMEASURED.** Not evidence of absence, and it must NOT be folded into a
-       zero-WebSocket count. Survey #1 folded four `/about` cells into a "12/12"
-       claim and its own audit caught it. A re-run costs credits: ASK before spending
-       a second generation rather than looping.
+       zero-WebSocket count. A re-run costs credits: ASK before spending a second
+       generation rather than looping.
 
 COST:
   * `--mode image` (default): zero Veo credits, one unit of the daily image quota.
-  * `--mode video`: **REAL VEO CREDITS.** One generation per run. The model is pinned
-    to `veo_3_1_lite` (10 credits, the cheapest — `api/video.py:I2V_DEFAULT_MODEL`)
-    and the count to x1, because with `model=None` the editor submits on whatever
-    tier it last remembered, which may be the 100-credit one (#125). Use `--runs 1`.
+  * `--mode video`: **REAL VEO CREDITS**, ~10 per run. `--runs` therefore defaults to
+    1 in video mode and 2 in image mode; the model is pinned to `veo_3_1_lite` and
+    the count to x1 (see the inline comment at the pin). Nothing is downloaded.
 Nothing is created server-side beyond the media itself, which lands in the project
-like any other; the video arm does not download it.
+like any other.
 
-USAGE:
+WHAT THE EVIDENCE FILE CONTAINS. Never bodies — only sizes, content-types, rpcids
+and timings. It DOES keep each URL's first 200 characters, and a Google URL can
+carry live query material there (a `play.google.com/log?...auth=SAPISIDHASH...` was
+captured on the video run). `scripts/dev/_spike_out/` is gitignored for exactly this
+reason: the finding is shareable, the bytes that produced it are not.
+
+USAGE — `--runs` defaults to 2 for image and 1 for video, so neither line needs it:
     python scripts/dev/spike_generation_wire_survey.py --profile ffroliva \
-        --project c5550ed7-7b6e-43db-8cd3-4d56a74b1244 --runs 2
+        --project c5550ed7-7b6e-43db-8cd3-4d56a74b1244
     python scripts/dev/spike_generation_wire_survey.py --profile ffroliva \
-        --project c5550ed7-7b6e-43db-8cd3-4d56a74b1244 --mode video --runs 1
+        --project c5550ed7-7b6e-43db-8cd3-4d56a74b1244 --mode video
 
 Chrome starts through `FlowApiClient`, which takes the profile lease first. A
 `ProfileLockedError` means the lease is working — wait, or use another profile;
@@ -271,10 +279,9 @@ async def run_once(client: Any, project_id: str, run: int, mode: str) -> dict[st
             # The page polls jwpduf/as29s on its own; this driver adds no traffic
             # (migrated_composer module docstring), so the cadence recorded here is
             # Flow's, not ours. Not downloaded: the clip stays in the project.
-            record = await composer.submit_and_observe(
+            result: Any = await composer.submit_and_observe(
                 page, poll_timeout_s=600.0, on_started=None, project_id=project_id
             )
-            result: Any = record
         else:
             from gflow_cli.api.image import GenerateImageRequest
 
@@ -289,27 +296,42 @@ async def run_once(client: Any, project_id: str, run: int, mode: str) -> dict[st
             await composer.send_prompt(page, request.prompt)
             events.append({"t": round(time.monotonic() - t0, 3), "marker": "submit_begin"})
             result = await composer.submit_images_and_observe(page, request)
-        events.append(
-            {
-                "t": round(time.monotonic() - t0, 3),
-                "marker": "submit_done",
-                "media": str(result)[:120],
-            }
-        )
+        # The terminal fields BY NAME, because `str(result)[:120]` truncates a video
+        # GenerationRecord before `status` / `is_done` / `size_bytes` -- so the run's
+        # own outcome reached stdout and never the evidence file, and the findings
+        # note ended up citing numbers the capture did not hold. Named fields also
+        # keep the record's signed `video_url` out, which a wider `str()` slice would
+        # have dragged in. Omitted entirely on the image arm, whose result is a list
+        # and carries none of them: an all-null field reads like a failed read.
+        terminal = {
+            k: v
+            for k in ("status", "is_done", "size_bytes", "media_id", "workflow_id")
+            if (v := getattr(result, k, None)) is not None
+        }
+        done = {"t": round(time.monotonic() - t0, 3), "marker": "submit_done"}
+        done["media"] = str(result)[:120]
+        if terminal:
+            done["terminal"] = terminal
+        events.append(done)
     except Exception as exc:  # noqa: BLE001 — a failed submit is an OUTCOME, not a crash
         error = f"{type(exc).__name__}: {str(exc)[:300]}"
         events.append({"t": round(time.monotonic() - t0, 3), "marker": "error", "detail": error})
-
-    # Detach BEFORE snapshotting: the page is pooled, and a listener left attached
-    # appends into THIS run's arrays (survey #1's evidence was corrupted exactly so).
-    page.remove_listener("request", _on_request)
-    page.remove_listener("response", _on_response)
-    page.remove_listener("websocket", _on_websocket)
-    try:
-        await cdp.detach()
-    except Exception:  # noqa: BLE001
-        pass
-    client._checkin_page(page)  # type: ignore[attr-defined]  # noqa: SLF001
+    finally:
+        # `finally`, not fall-through: `except Exception` does not catch Ctrl-C or a
+        # cancellation, and the video arm holds this page for up to poll_timeout_s.
+        # Without it an interrupt mid-poll returns the page to nobody and the next run
+        # blocks forever in `_checkout_page`.
+        #
+        # Detach BEFORE snapshotting: the page is pooled, and a listener left attached
+        # appends into THIS run's arrays (survey #1's evidence was corrupted exactly so).
+        page.remove_listener("request", _on_request)
+        page.remove_listener("response", _on_response)
+        page.remove_listener("websocket", _on_websocket)
+        try:
+            await cdp.detach()
+        except Exception:  # noqa: BLE001
+            pass
+        client._checkin_page(page)  # type: ignore[attr-defined]  # noqa: SLF001
 
     events = list(events)
     for e in events:
@@ -318,15 +340,21 @@ async def run_once(client: Any, project_id: str, run: int, mode: str) -> dict[st
 
     polls = [e for e in events if e.get("rpcid")]
     gaps = [round(b["t"] - a["t"], 3) for a, b in zip(polls, polls[1:], strict=False)]
-    # Gaps PER rpcid too. "jwpduf every 5 s" is a claim about one rpcid's cadence,
-    # and an all-traffic gap list hides it whenever anything else interleaves.
+    # Gaps PER rpcid, measured between DISPATCHES. Two corrections in one:
+    #   * per rpcid, because "jwpduf every 5 s" is a claim about one rpcid's cadence,
+    #     and an all-traffic gap list hides it whenever anything else interleaves;
+    #   * dispatch, because arrival spacing carries the network jitter this question
+    #     has to see past. Measured on the video run: the same eight polls read
+    #     stdev 3.5 ms by dispatch and 178 ms by arrival, so an arrival-keyed list
+    #     cannot separate a fixed timer from a cadence that reacts to each reply --
+    #     which is the entire question. `sent_t` is absent only for a response whose
+    #     request predates the listener, and those fall back to arrival.
     per_rpcid_gaps: dict[str, list[float]] = {}
     for rpcid in {str(e["rpcid"]) for e in polls}:
-        ts = [e["t"] for e in polls if e["rpcid"] == rpcid]
+        ts = [e.get("sent_t", e["t"]) for e in polls if e["rpcid"] == rpcid]
         per_rpcid_gaps[rpcid] = [round(b - a, 3) for a, b in zip(ts, ts[1:], strict=False)]
     return {
         "run": run,
-        "mode": mode,
         "error": error,
         "measured": error is None,
         "duration_s": round(time.monotonic() - t0, 2),
@@ -341,7 +369,13 @@ async def run_once(client: Any, project_id: str, run: int, mode: str) -> dict[st
         # The discriminator: a reply held open for tens of seconds is a long-poll,
         # not a late request. Anything over a few seconds is the interesting case.
         "in_flight": sorted(
-            ((e.get("in_flight_s"), e["rpcid"], e["t"]) for e in polls if e.get("in_flight_s")),
+            (
+                (e["in_flight_s"], e["rpcid"], e["t"])
+                # `is not None`, not truthiness: a reply that round-trips in under
+                # 0.5 ms rounds to 0.0 and a falsy test drops it from the list.
+                for e in polls
+                if e.get("in_flight_s") is not None
+            ),
             reverse=True,
         )[:8],
         "poll_gaps_s": gaps,
@@ -355,18 +389,29 @@ async def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--profile", required=True)
     ap.add_argument("--project", required=True)
-    ap.add_argument("--runs", type=int, default=2)
+    ap.add_argument(
+        "--runs",
+        type=int,
+        default=None,
+        help="default: 2 in image mode, 1 in video mode (each video run spends credits).",
+    )
     ap.add_argument(
         "--mode",
         choices=("image", "video"),
         default="image",
-        help="image: daily quota, zero Veo credits. video: REAL VEO CREDITS (10/run).",
+        help="image: daily quota, zero Veo credits. video: REAL VEO CREDITS (~10/run).",
     )
     args = ap.parse_args()
 
+    # The default has to follow the mode, not the other way round. It was a flat 2,
+    # so appending `--mode video` to the committed image invocation silently doubled
+    # a real bill -- and the banner below computed that total and printed it rather
+    # than preventing it. Replication defaults to cheap; more runs are opt-in.
+    runs = args.runs if args.runs is not None else (1 if args.mode == "video" else 2)
+
     if args.mode == "video":
         print(
-            f"!! --mode video spends REAL Veo credits: ~10 per run x {args.runs} run(s).",
+            f"!! --mode video spends REAL Veo credits: ~10 per run x {runs} run(s).",
             flush=True,
         )
 
@@ -377,7 +422,7 @@ async def main() -> int:
         "runs": [],
     }
     async with build_client(resolve_profile_dir(args.profile)) as client:
-        for run in range(1, args.runs + 1):
+        for run in range(1, runs + 1):
             print(f"[run {run}] generating ({args.mode})…", flush=True)
             obs = await run_once(client, args.project, run, args.mode)
             report["runs"].append(obs)

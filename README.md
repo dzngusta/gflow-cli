@@ -139,6 +139,23 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
 
 Full milestone history lives in [CHANGELOG.md](CHANGELOG.md). Where the project is heading: [ROADMAP.md](ROADMAP.md).
 
+## Support gflow-cli
+
+gflow-cli is built and maintained by one person. Every release is verified against real Google Flow, which spends real AI credits, and breakages get fixed fast because people run it in their pipelines. Sponsorship pays for both.
+
+[![Sponsor $5 one-time](https://img.shields.io/badge/☕_sponsor-$5_one--time-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/ffroliva/sponsorships?frequency=one-time&amount=5)
+[![Sponsor $5 a month](https://img.shields.io/badge/💖_sponsor-$5_a_month-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/ffroliva/sponsorships?frequency=monthly&amount=5)
+
+Relying on gflow-cli at work? The company tiers put your logo here and get priority issues. All tiers and what each one gets: [docs/SPONSORS.md](docs/SPONSORS.md).
+
+Patched gflow-cli in your fork? Please [open an issue](https://github.com/ffroliva/gflow-cli/issues) or a pull request — a fix that lands upstream helps everyone.
+
+### Hall of fame
+
+<!-- sponsors:start -->
+No sponsors yet. <a href="https://github.com/sponsors/ffroliva/sponsorships?frequency=one-time&amp;amount=5">Be the first</a> — every sponsor is listed here.
+<!-- sponsors:end -->
+
 ## License & legal
 
 [MIT License](LICENSE) © 2026 Flavio Oliva (`ffroliva`). The MIT license covers `gflow-cli`'s code only. It grants no rights to Flow, Veo model output, or any Google service. Google's own terms (Labs Additional Terms and any plan-specific subscription terms) govern your generations. See the [DISCLAIMER](DISCLAIMER.md).

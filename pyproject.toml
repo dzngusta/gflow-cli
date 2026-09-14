@@ -103,6 +103,7 @@ flow = "gflow_cli.cli:main"
 [project.urls]
 Homepage = "https://github.com/ffroliva/gflow-cli"
 Issues = "https://github.com/ffroliva/gflow-cli/issues"
+Funding = "https://github.com/sponsors/ffroliva"
 
 [build-system]
 requires = ["hatchling"]

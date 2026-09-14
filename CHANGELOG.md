@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Installable as a Claude Code plugin.** `/plugin marketplace add ffroliva/gflow-cli` then
+  `/plugin install gflow@gflow-cli` installs the `gflow-cli` and `video-production` skills and
+  registers the MCP server in one step. The plugin ships **disabled**: Claude Code starts a
+  plugin's MCP servers automatically on enable with no prompt of its own, and this one drives your
+  own Google account where video generation bills your credits, so enabling it is a deliberate act.
+  For a hard guarantee, register the server yourself with `gflow mcp run --no-spend`.
 - **`docs/DISTRIBUTION.md`** — an operational catalog of every channel people install or discover
   gflow-cli through: audience, how to submit, requirements, status and a last-verified date per
   row. Every row was checked live. It also records the channels that listed us without being asked
@@ -35,6 +41,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with Google", and `DISCLAIMER.md` still opens "not affiliated with, endorsed by, sponsored by,
   or otherwise connected to Google LLC" — only the word "unofficial" left its first sentence.
   It was leading with a negative in the one line PyPI shows in search results.
+
+### Fixed
+
+- **The Codex and ChatGPT-desktop plugin manifests shipped every skill in `skills/`**, including
+  maintainer-only ones (`release`, `check`, `pr-council-review`, `sonar`, `doc-review`). All three
+  channels now point at the same curated two-skill payload under `plugins/gflow/`, generated from
+  `skills/` by `scripts/ci/generate_plugin_skills.py` with a `--check` drift gate in CI.
 
 ## [0.74.0] — 2026-09-14
 

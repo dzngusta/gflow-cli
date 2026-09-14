@@ -1,0 +1,205 @@
+r"""Can gflow read per-model credit prices and the credit balance on flow.google.com? ($0)
+
+QUESTION. The spend-cap workstream (community-feedback-uplift WS2) wants to refuse a paid
+run whose cost exceeds a cap. On labs, `trpc/flow.projectInitialData` carries both the
+per-model `creditMapping` and `remainingCredits` (docs/superpowers/spikes/2026-08-31-veo-
+extend-route-recon.md). On accounts served flow.google.com, #795 says the balance surface
+"has not been located", and the 2026-09-05 wire spike saw a composer cost line
+("Generating will use N credits") but never looked at the wire for prices or a balance.
+Nobody has measured either on this host. This does.
+
+COST: $0. Two navigations, DOM reads, and typing a throwaway prompt into the composer that
+is cleared again. Nothing is submitted, created, uploaded or deleted. The balance read
+through `api/credits.py` is an HTTP GET.
+
+WHAT IT RECORDS
+  * the host that actually served (never assumed from the account)
+  * every response from flow.google.com batchexecute, labs trpc and aisandbox-pa: rpcid or
+    route, status, size, and whether the body carries credit-shaped keys
+    (credit*, remaining*, paygate*, *tier*). Matched key names and short snippets go to
+    the gitignored capture only; the printed summary carries key names and counts.
+  * DOM, before and after typing a prompt: text lines that pair a number with "credit"
+    (discovery only, never a production anchor), aria-labels mentioning credits, the
+    `prompt-warning-button` count, and `mat-icon` ligatures present.
+  * `fetch_credits_http` outcome for the same profile, before the browser starts.
+
+PRE-REGISTERED READING (written before the run; commit this file before the data exists)
+  * A batchexecute response on project load carries credit-shaped keys with numbers
+    -> price and/or balance are on the wire. WS2 is buildable from the wire; next step is
+       decoding that rpcid, not DOM scraping.
+  * No wire keys, but a DOM cost line with a number appears once a prompt is typed
+    -> the declared price is readable before submit from the DOM. A cap on declared price
+       is buildable (needs a structural anchor for the line, not its text). The balance is
+       still unknown, so the cap cannot compare against the balance.
+  * Neither
+    -> **UNMEASURED**, not absent: the settings/count panel was not opened, and the cost
+       line lives under its count row (2026-09-05). Do NOT record "no prices on this host".
+       What would settle it: the HAR harness with a human opening the settings panel.
+  * The profile is signed out, lands on /about, or is served labs
+    -> UNMEASURED for this host. Say which, and stop.
+  * `fetch_credits_http` succeeds on this profile
+    -> #795's premise no longer holds for this account; re-read #795 before planning.
+
+    python scripts/dev/spike_credits_migrated_surface.py --profile denon82
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import re
+import sys
+from pathlib import Path
+from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _spike_common import (  # noqa: E402, isort: skip
+    build_client,
+    default_out_path,
+    resolve_profile_dir,
+    step,
+)
+
+MIGRATED_ROOT = "https://flow.google.com/"
+_WATCHED = ("flow.google.com", "labs.google", "aisandbox-pa.googleapis.com")
+_CREDIT_KEY = re.compile(r'"?([A-Za-z_]*(?:credit|remaining|paygate|Tier)[A-Za-z_]*)"?', re.I)
+_PROMPT = "spike probe, not submitted"
+
+_DOM_JS = r"""
+() => {
+  const lines = (document.body.innerText || '').split('\n').map(s => s.trim()).filter(Boolean);
+  const creditLines = lines.filter(l => /\d/.test(l) && /credit/i.test(l)).slice(0, 20);
+  const aria = [...document.querySelectorAll('[aria-label]')]
+    .map(e => e.getAttribute('aria-label')).filter(a => /credit/i.test(a)).slice(0, 20);
+  const icons = [...new Set([...document.querySelectorAll('mat-icon, i.google-symbols')]
+    .map(e => (e.textContent || '').trim()).filter(Boolean))].slice(0, 80);
+  return {
+    url: location.href,
+    aisandbox_root: document.querySelectorAll('aisandbox-root').length,
+    mat_icon: document.querySelectorAll('mat-icon').length,
+    google_symbols: document.querySelectorAll('i.google-symbols').length,
+    warning_button: document.querySelectorAll('button.prompt-warning-button').length,
+    project_links: [...new Set([...document.querySelectorAll('a[href*="/project/"]')]
+      .map(a => a.getAttribute('href')))].slice(0, 5),
+    editors: document.querySelectorAll('[contenteditable="true"]').length,
+    credit_lines: creditLines,
+    credit_aria: aria,
+    icons,
+  };
+}
+"""
+
+
+def _route(url: str) -> str:
+    match = re.search(r"rpcids=([^&]+)", url)
+    if match:
+        return f"batchexecute:{match.group(1)}"
+    return re.sub(r"\?.*$", "", url.split("//", 1)[-1])[:120]
+
+
+async def _balance_via_http(profile_dir: Path) -> dict[str, Any]:
+    from gflow_cli.api.credits import fetch_credits_http
+
+    try:
+        info = await fetch_credits_http(profile_dir)
+        return {"ok": True, "info": repr(info)[:300]}
+    except Exception as exc:  # noqa: BLE001 - a spike records every outcome
+        return {"ok": False, "error_type": type(exc).__name__, "detail": str(exc)[:300]}
+
+
+async def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--profile", required=True)
+    ap.add_argument("--settle", type=float, default=8.0)
+    args = ap.parse_args()
+    profile_dir = resolve_profile_dir(args.profile)
+    out: dict[str, Any] = {"profile": args.profile, "responses": [], "dom": {}}
+
+    step("http", "fetch_credits_http before the browser starts")
+    out["balance_http"] = await _balance_via_http(profile_dir)
+
+    async with build_client(profile_dir) as client:
+        context = client._context  # noqa: SLF001 - spike reads the live context
+        assert context is not None
+        pending: list[asyncio.Task[None]] = []
+
+        async def record(response: Any) -> None:
+            url = response.url
+            if not any(host in url for host in _WATCHED):
+                return
+            entry: dict[str, Any] = {"route": _route(url), "status": response.status}
+            try:
+                body = await response.text()
+            except Exception:  # noqa: BLE001 - redirects and aborted bodies have none
+                body = ""
+            entry["size"] = len(body)
+            keys = sorted({m.group(1) for m in _CREDIT_KEY.finditer(body)})
+            if keys:
+                entry["credit_keys"] = keys[:30]
+                entry["snippets"] = [
+                    body[max(0, m.start() - 40) : m.end() + 60]
+                    for m in list(_CREDIT_KEY.finditer(body))[:6]
+                ]
+            out["responses"].append(entry)
+
+        context.on("response", lambda r: pending.append(asyncio.ensure_future(record(r))))
+        page = await context.new_page()
+
+        step("nav", MIGRATED_ROOT)
+        await page.goto(MIGRATED_ROOT, wait_until="domcontentloaded", timeout=60_000)
+        await page.wait_for_timeout(int(args.settle * 1000))
+        out["dom"]["root"] = await page.evaluate(_DOM_JS)
+        links = out["dom"]["root"]["project_links"]
+        if "/about" in page.url or not links:
+            out["verdict_hint"] = "UNMEASURED: signed out, /about, or no project grid"
+        else:
+            target = links[0] if links[0].startswith("http") else f"https://flow.google.com{links[0]}"
+            step("nav", "first existing project (nothing created)")
+            await page.goto(target, wait_until="domcontentloaded", timeout=60_000)
+            await page.wait_for_timeout(int(args.settle * 1000))
+            out["dom"]["project_before_typing"] = await page.evaluate(_DOM_JS)
+            editor = page.locator('[contenteditable="true"]').first
+            if await editor.count():
+                step("type", "throwaway prompt, never submitted")
+                await editor.click()
+                await page.keyboard.type(_PROMPT, delay=20)
+                await page.wait_for_timeout(3000)
+                out["dom"]["project_after_typing"] = await page.evaluate(_DOM_JS)
+                await page.keyboard.press("Control+A")
+                await page.keyboard.press("Delete")
+                await page.wait_for_timeout(1000)
+                out["dom"]["project_after_clearing"] = await page.evaluate(_DOM_JS)
+            else:
+                out["dom"]["project_after_typing"] = "no contenteditable editor found"
+        await asyncio.gather(*pending, return_exceptions=True)
+        await page.close()
+
+    path = default_out_path("spike_credits_migrated_surface")
+    path.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    print(f"\ncapture: {path}")
+    print("balance_http:", {k: v for k, v in out["balance_http"].items() if k != "info"})
+    for name, dom in out["dom"].items():
+        if isinstance(dom, dict):
+            print(
+                f"dom[{name}] url={dom['url'][:70]} aisandbox_root={dom['aisandbox_root']} "
+                f"mat_icon={dom['mat_icon']} warning={dom['warning_button']} "
+                f"credit_lines={dom['credit_lines']} credit_aria={dom['credit_aria']}"
+            )
+        else:
+            print(f"dom[{name}] {dom}")
+    carriers = [r for r in out["responses"] if r.get("credit_keys")]
+    routes = sorted({r["route"] for r in out["responses"]})
+    print(f"responses watched: {len(out['responses'])}, distinct routes: {len(routes)}")
+    for r in carriers:
+        print(f"  CREDIT-SHAPED {r['route']} status={r['status']} size={r['size']} keys={r['credit_keys'][:12]}")
+    if not carriers:
+        print("  no credit-shaped keys in any watched response")
+    print("verdict_hint:", out.get("verdict_hint", "read the pre-registered table"))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(asyncio.run(main()))

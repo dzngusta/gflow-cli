@@ -1,3 +1,3 @@
 """gflow-cli — unofficial CLI for Google Flow."""
 
-__version__ = "0.73.2"
+__version__ = "0.74.0"

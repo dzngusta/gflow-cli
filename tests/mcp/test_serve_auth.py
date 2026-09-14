@@ -68,6 +68,23 @@ TOKEN = "test-daemon-token"
 MCP_HEADERS = {"Accept": "application/json, text/event-stream"}
 PING = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
 
+#: ``ping`` is answered with 400 "Missing session ID" whatever the auth outcome,
+#: so it can only ever support a ``!= 401`` claim. ``initialize`` is the one
+#: method that needs no prior session: measured against this SDK it returns 200,
+#: a real ``result`` body and an ``mcp-session-id`` header — a POSITIVE success,
+#: which is what lets the "correct token" tests fail a middleware that answers
+#: 500 or 403 instead of passing the request through.
+INITIALIZE = {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {},
+        "clientInfo": {"name": "gflow-serve-auth-tests", "version": "0"},
+    },
+}
+
 
 def build(
     *,
@@ -86,8 +103,17 @@ def build(
     return build_app(transport=transport, host=host, token=token)
 
 
+class _HeadResponseSentError(Exception):
+    """Sentinel raised out of ``send`` once the response headers are known."""
+
+
 async def response_head(
-    app: Starlette, method: str, path: str, *, timeout: float = 10.0
+    app: Starlette,
+    method: str,
+    path: str,
+    *,
+    authorization: str | None = None,
+    timeout: float = 10.0,
 ) -> tuple[int, dict[str, str]]:
     """Drive ``app`` as a raw ASGI callable and return ``(status, headers)``.
 
@@ -95,12 +121,19 @@ async def response_head(
     ends, and nothing in ``TestClient`` can bound it — the in-process
     transport ignores httpx's ``timeout=``, and ``client.stream()`` blocks on
     the portal just the same (both verified against this SDK). A suite that
-    hangs is strictly worse than one that fails, and the state that hangs is
-    exactly the one under test: auth missing on the SSE path.
+    hangs is strictly worse than one that fails.
 
-    Calling the app inside ``asyncio.wait_for`` puts a real cancellation
-    boundary around it, so a missing 401 surfaces as a ``TimeoutError``
-    failure. The response body is never consumed — only the headers are.
+    The status line is the whole answer here and it arrives before the body, so
+    ``send`` records ``http.response.start`` and immediately raises
+    :class:`_HeadResponseSentError` — the stream is torn down at the one instant its
+    headers are complete and the body is never read. That is what makes the
+    ACCEPTED case testable too, not just the rejected one: an endless
+    ``text/event-stream`` becomes a plain ``(200, headers)`` return.
+
+    ``except*`` because the SDK's stream response runs inside an anyio task
+    group, which re-raises the sentinel wrapped in an ``ExceptionGroup``; a
+    401 raises it bare. Both are caught, and a real hang still surfaces as the
+    ``asyncio.wait_for`` ``TimeoutError``.
     """
     start: dict[str, Any] = {}
     body_sent = False
@@ -118,7 +151,11 @@ async def response_head(
     async def send(message: Message) -> None:
         if message["type"] == "http.response.start":
             start.update(message)
+            raise _HeadResponseSentError
 
+    raw_headers = [(b"host", b"127.0.0.1:8000")]
+    if authorization is not None:
+        raw_headers.append((b"authorization", authorization.encode()))
     scope: Scope = {
         "type": "http",
         "asgi": {"version": "3.0", "spec_version": "2.3"},
@@ -129,11 +166,14 @@ async def response_head(
         "raw_path": path.encode(),
         "query_string": b"",
         "root_path": "",
-        "headers": [(b"host", b"127.0.0.1:8000")],
+        "headers": raw_headers,
         "client": ("127.0.0.1", 50000),
         "server": ("127.0.0.1", 8000),
     }
-    await asyncio.wait_for(app(scope, receive, send), timeout=timeout)
+    try:
+        await asyncio.wait_for(app(scope, receive, send), timeout=timeout)
+    except* _HeadResponseSentError:
+        pass
     headers = {k.decode().lower(): v.decode() for k, v in start.get("headers", [])}
     return int(start["status"]), headers
 
@@ -207,11 +247,14 @@ def test_the_correct_token_reaches_the_transport(scheme: str) -> None:
         resp = client.post(
             HTTP_PATH,
             headers={**MCP_HEADERS, "Authorization": f"{scheme} {TOKEN}"},
-            json=PING,
+            json=INITIALIZE,
         )
-    # Observed: 400 — the request got past auth and into the transport, which
-    # is the whole claim here. Asserting 400 would pin SDK internals instead.
-    assert resp.status_code != 401, scheme
+    # A POSITIVE success, not merely "not 401": the request reached the
+    # transport AND the transport answered it. ``!= 401`` on a ``ping`` (which
+    # 400s whatever happens) would be satisfied by a middleware that 500s.
+    assert resp.status_code == 200, (scheme, resp.status_code, resp.text[:200])
+    assert resp.headers.get("mcp-session-id"), scheme
+    assert '"result"' in resp.text, scheme
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +277,25 @@ async def test_sse_stream_path_requires_the_token() -> None:
     assert headers.get("www-authenticate", "").startswith("Bearer")
 
 
+@pytest.mark.asyncio
+async def test_sse_stream_path_admits_the_correct_token() -> None:
+    """The correct token is accepted on BOTH transports, not just on ``/mcp``.
+
+    This was previously recorded as untestable — an accepted SSE stream never
+    ends. It is testable: :func:`response_head` tears the stream down the
+    instant ``http.response.start`` arrives, which is after the status and
+    content type are final and before a single byte of body is read.
+
+    Without this, a middleware that 401s every ``GET /sse`` while passing
+    ``/messages/`` through would satisfy the whole SSE section — the deprecated
+    transport would be dead and nothing red.
+    """
+    app = build(transport="sse", token=TOKEN)
+    status, headers = await response_head(app, "GET", SSE_PATH, authorization=f"Bearer {TOKEN}")
+    assert status == 200, (status, headers)
+    assert headers.get("content-type", "").startswith("text/event-stream"), headers
+
+
 def test_sse_message_path_requires_the_token() -> None:
     """The other half of the SSE surface: the client's write channel."""
     app = build(transport="sse", token=TOKEN)
@@ -247,15 +309,21 @@ def test_sse_message_path_admits_the_correct_token() -> None:
     """Guards the sibling failure of the two tests above: a middleware that
     401s unconditionally would satisfy them while breaking the transport.
 
-    Only the message path is exercised — a ``GET /sse`` with a valid token
-    deliberately opens a long-lived event stream, so there is no status to
-    assert there without reading the stream.
+    The stream half of the same claim is
+    :func:`test_sse_stream_path_admits_the_correct_token`.
+
+    Unlike the Streamable HTTP path there is no payload that yields a 200 here:
+    measured, ``/messages/`` answers 400 ``session_id is required`` to BOTH
+    ``ping`` and ``initialize``, because the SSE write channel is only reachable
+    with a session minted by an open ``GET /sse``. So the positive evidence is
+    the transport's own 400 and its own body — which a middleware answering 401,
+    403 or 500 cannot produce.
     """
     app = build(transport="sse", token=TOKEN)
     with TestClient(app, base_url=BASE_URL) as client:
         resp = client.post(MESSAGE_PATH, headers={"Authorization": f"Bearer {TOKEN}"}, json=PING)
-    # Observed: 400 (no session id) — past auth, inside the transport.
-    assert resp.status_code != 401
+    assert resp.status_code == 400, (resp.status_code, resp.text[:200])
+    assert "session_id" in resp.text, resp.text[:200]
 
 
 # ---------------------------------------------------------------------------
@@ -291,10 +359,12 @@ def test_token_comparison_goes_through_hmac_compare_digest(
         resp = client.post(
             HTTP_PATH,
             headers={**MCP_HEADERS, "Authorization": f"Bearer {TOKEN}"},
-            json=PING,
+            json=INITIALIZE,
         )
 
-    assert resp.status_code != 401
+    # 200, not ``!= 401``: the spy must not be able to pass by wrapping a
+    # middleware that rejects the request some other way.
+    assert resp.status_code == 200, (resp.status_code, resp.text[:200])
 
     def seen(value: object) -> str:
         return value.decode("utf-8", "replace") if isinstance(value, bytes) else str(value)

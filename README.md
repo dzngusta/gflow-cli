@@ -1,6 +1,8 @@
+<!-- mcp-name: io.github.ffroliva/gflow-cli -->
+
 # gflow-cli
 
-> Unofficial Python CLI for Google Flow. Drive [Veo](https://labs.google/fx/tools/flow) (image-to-video, text-to-video) and Imagen (text-to-image) from your terminal: scripted, batched, pipeline-ready.
+> Python CLI and MCP server for Google Flow. Drive [Veo](https://labs.google/fx/tools/flow) (image-to-video, text-to-video) and Imagen (text-to-image) from your terminal: scripted, batched, pipeline-ready.
 
 [![PyPI version](https://img.shields.io/pypi/v/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
 [![CI](https://github.com/ffroliva/gflow-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/ffroliva/gflow-cli/actions/workflows/ci.yml)
@@ -20,7 +22,7 @@
 
 <!-- sponsors-gold:end -->
 
-> ⚠️ **Read this before you install.** gflow-cli is **unofficial, alpha, and reverse-engineered — not affiliated with Google**. It drives a headed browser on *your own* Google Flow session, so treat it as your own account risk: automation is subject to Google's ToS, and endpoints or UI can change without notice. It works with **any Google account** that has Flow access, and every generation bills against your account's Flow credit allowance. Read the full [DISCLAIMER](DISCLAIMER.md).
+> ⚠️ **Read this before you install.** gflow-cli is **alpha and reverse-engineered — not affiliated with Google**. It drives a headed browser on *your own* Google Flow session, so treat it as your own account risk: automation is subject to Google's ToS, and endpoints or UI can change without notice. It works with **any Google account** that has Flow access, and every generation bills against your account's Flow credit allowance. Read the full [DISCLAIMER](DISCLAIMER.md).
 >
 > 🛡️ **"Will this get my account flagged?"** The honest, specific answer — what the tool does to stay unremarkable (headed real Chrome, randomised interaction timing, paced submissions), what it deliberately does **not** do (no proxies, no fingerprint spoofing, no pretending it isn't automation), what you can tune, and what we cannot promise — is in [docs/ACCOUNT_SAFETY.md](docs/ACCOUNT_SAFETY.md).
 >

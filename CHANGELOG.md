@@ -11,9 +11,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Installable as a Claude Code plugin.** `/plugin marketplace add ffroliva/gflow-cli` then
   `/plugin install gflow@gflow-cli` installs the `gflow-cli` and `video-production` skills and
-  registers the MCP server in one step. The plugin ships **disabled** and asks you to acknowledge
-  that video generation bills your Google account before it runs, because Claude Code starts a
-  plugin's MCP servers automatically on enable with no prompt of its own.
+  registers the MCP server in one step. The plugin ships **disabled**: Claude Code starts a
+  plugin's MCP servers automatically on enable with no prompt of its own, and this one drives your
+  own Google account where video generation bills your credits, so enabling it is a deliberate act.
+  For a hard guarantee, register the server yourself with `gflow mcp run --no-spend`.
+- **`docs/DISTRIBUTION.md`** — an operational catalog of every channel people install or discover
+  gflow-cli through: audience, how to submit, requirements, status and a last-verified date per
+  row. Every row was checked live. It also records the channels that listed us without being asked
+  (MCP Market, skills.sh with 21 installs, two auto-generated catalogs) and the ones we are not
+  eligible for, with the reason.
+- **`server.json`** — metadata for the official MCP Registry, with `tests/test_server_json.py`
+  pinning version lockstep, the schema's 100-character description cap, the name pattern, the
+  `mcp-name:` ownership token in the README, and that the command it advertises really exists.
+- **A `gflow-cli` console script.** `uvx gflow-cli mcp run` previously failed with uv's own
+  *"Use `uvx --from gflow-cli <EXECUTABLE-NAME>` instead"*, because the console scripts were named
+  `gflow` and `flow`. The MCP Registry builds exactly that `uvx <identifier>` command from the
+  PyPI identifier and has no field for a differing executable name, so a listing would have been
+  broken on arrival.
+
+### Changed
+
+- **PyPI metadata.** The summary described only image-to-video and never mentioned MCP; it now
+  says what the package is. Added `Documentation`, `Repository` and `Changelog` sidebar links,
+  ten trove classifiers (all checked against the official list) and MCP-related keywords.
+- **Dropped "unofficial" as a label** from the PyPI summary, `README.md`, `index.html`, the docs
+  site, `llms.txt`, `ROADMAP.md`, `DISCLAIMER.md`, `AGENTS.md`, `CLAUDE.md`,
+  `skills/gflow-cli/SKILL.md` and `src/gflow_cli/__init__.py`. The substance is unchanged and
+  still prominent: the README warning block reads "alpha and reverse-engineered — not affiliated
+  with Google", and `DISCLAIMER.md` still opens "not affiliated with, endorsed by, sponsored by,
+  or otherwise connected to Google LLC" — only the word "unofficial" left its first sentence.
+  It was leading with a negative in the one line PyPI shows in search results.
 
 ### Fixed
 

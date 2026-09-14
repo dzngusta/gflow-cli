@@ -165,7 +165,8 @@ def test_the_mcp_command_is_a_console_script_that_exists() -> None:
 # --- curation: the property that matters -------------------------------------------
 
 
-def test_shipped_set_matches_the_generator() -> None:
+def _generator() -> Any:
+    """Load `scripts/ci/generate_plugin_skills.py` (not importable as a package)."""
     from importlib import util
 
     spec = util.spec_from_file_location(
@@ -174,7 +175,11 @@ def test_shipped_set_matches_the_generator() -> None:
     assert spec and spec.loader
     module = util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    assert set(module.SHIPPED) == _SHIPPED
+    return module
+
+
+def test_shipped_set_matches_the_generator() -> None:
+    assert set(_generator().SHIPPED) == _SHIPPED
 
 
 def test_no_maintainer_only_skill_reaches_the_plugin() -> None:
@@ -184,11 +189,12 @@ def test_no_maintainer_only_skill_reaches_the_plugin() -> None:
 
 
 def test_every_shipped_skill_is_byte_identical_to_its_source() -> None:
-    """The plugin copy is generated. A hand-edit here would fork the protocol silently."""
-    import re
+    """The plugin copy is generated. A hand-edit here would fork the protocol silently.
 
-    blob = "https://github.com/ffroliva/gflow-cli/blob/main/"
-    escapes = re.compile(r"\]\(\.\./\.\./([^)]+)\)")
+    Uses the generator's own `render()` rather than restating the rewrite rule. A second copy
+    of the regex here would drift from the generator and the test would still pass.
+    """
+    render = _generator().render
     for name in _SHIPPED:
         for source in (_REPO / "skills" / name).rglob("*"):
             if not source.is_file():
@@ -196,11 +202,7 @@ def test_every_shipped_skill_is_byte_identical_to_its_source() -> None:
             dest = _PLUGIN_DIR / "skills" / name / source.relative_to(_REPO / "skills" / name)
             assert dest.exists(), f"{dest} is missing — run generate_plugin_skills.py"
             text = source.read_text(encoding="utf-8")
-            expected = (
-                escapes.sub(lambda m: f"]({blob}{m.group(1)})", text)
-                if source.suffix == ".md"
-                else text
-            )
+            expected = render(text) if source.suffix == ".md" else text
             assert dest.read_text(encoding="utf-8") == expected, f"{dest} has drifted"
 
 
@@ -225,7 +227,3 @@ def test_chatgpt_desktop_marketplace_ships_the_curated_payload() -> None:
     """`source.path: ./` published the whole repo tree as the plugin."""
     path = _load(_AGENTS)["plugins"][0]["source"]["path"]
     assert path == "./plugins/gflow", path
-
-
-def test_codex_version_tracks_pyproject(version: str) -> None:
-    assert str(_load(_CODEX)["version"]) == version

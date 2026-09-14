@@ -125,9 +125,13 @@ One step, and you get the `gflow-cli` and `video-production` skills plus the MCP
 /plugin install gflow@gflow-cli
 ```
 
-The plugin ships **disabled**, and enabling it asks you to confirm one thing first: its MCP
-server drives your own Google account, and Veo video generation bills your credits. Enable it
-with `/plugin` once you have. Images and composition are free — only video spends.
+The plugin ships **disabled**. Claude Code starts a plugin's MCP servers automatically once a
+plugin is enabled, with no prompt of its own — and this server drives your own Google account,
+where Veo video generation bills your credits. So installing it starts nothing, and enabling it
+is a deliberate act. Images and composition are free; only video spends. For a hard guarantee,
+register the server yourself with `gflow mcp run --no-spend`, which never registers the
+credit-spending tools at all. See [docs/MCP.md](docs/MCP.md) for the details, including which
+revision `/plugin marketplace add` gives you.
 
 Codex users: `codex plugin marketplace add .` then `codex plugin add gflow@gflow-cli`.
 

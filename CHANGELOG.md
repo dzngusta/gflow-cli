@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.74.0] — 2026-09-14
+
 ### Added
 
 - **Sponsorship: a Support section, a sponsor hall of fame, and a Funding link on PyPI.** The
@@ -5012,7 +5014,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.73.2...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.74.0...HEAD
+[0.74.0]: https://github.com/ffroliva/gflow-cli/compare/v0.73.2...v0.74.0
 [0.73.2]: https://github.com/ffroliva/gflow-cli/compare/v0.73.1...v0.73.2
 [0.73.1]: https://github.com/ffroliva/gflow-cli/compare/v0.73.0...v0.73.1
 [0.73.0]: https://github.com/ffroliva/gflow-cli/compare/v0.72.0...v0.73.0

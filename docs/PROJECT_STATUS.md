@@ -4,6 +4,55 @@
 
 ## Current release
 
+**v0.74.0 — alpha.** **The migrated driver stops tripping over its own uploads — and two
+cohorts it cannot serve are told so plainly instead of being sent in circles.**
+
+**Every local file gflow uploads on `flow.google.com` is now run-unique** (#792, reported,
+root-caused and verified end-to-end by @ai4U23). Both attach paths find their upload again
+*by display name* — i2v searches the Frames picker, r2v queries the `@` mention — and Flow
+lists an upload under the name it was given. So a second run of one keyframe left two
+identical library entries, and the lookup could bind the stale one; the submit-body check
+then fired with `eb1hJf does not carry the uploaded start frame`. It uploads as
+`hero-a1b2c3d4.png` now, so the match is exact by construction and no sort order is
+trusted. The fix went in one level below where the report pointed, into the shared upload
+leg, which is why it covers `video i2v --initial-frame`, `video r2v --ref` **and**
+`image i2i --ref` rather than the one path the ticket named. It is a Playwright
+`FilePayload`, so nothing is copied to disk and no temp file can leak.
+
+**The Frames picker is confirmed when it does not commit on the pick** (#792). On some
+cohorts Flow's picker no longer closes when an asset is clicked — it waits for its own
+"Add to prompt". gflow sat out the hidden-wait and raised `UiSelectorDriftError` with the
+asset already picked, so i2v died before submit. It is now given a short grace period and,
+if still up, its confirm is clicked — anchored on `button.detail-add-to-prompt-btn`, a
+class measured on this exact surface, never on the translated label.
+
+**Two cohorts now get the truth instead of a loop.** `gflow credits` stopped sending
+migrated accounts to re-login *at the raise site they actually hit* (#795): the service was
+catching its own accurate verdict and re-deriving it through a browser, which reported
+"SAPISID cookie missing … re-run `gflow auth login`" — advice that is wrong in every word
+there, and that can roll a profile's strategy marker back and start the #791 spiral. And an
+agent-only composer on `flow.google.com` now exits **25** (`FlowAgentUiError`,
+`retryable: false`) rather than 23, which read as *our* bug and invited a retry that cannot
+work (#799, reported with the DOM evidence by @Cstanish127).
+
+**Sponsorship**: a Support section, a hall of fame refreshed daily from GitHub Sponsors,
+and a Funding link on PyPI. No CLI or MCP surface changes.
+
+**What this release does NOT fix, stated plainly.** Login verification for accounts
+migrated to `flow.google.com` (**#791**) is still broken, and it is the one thing that
+blocks two reporters outright. The fix is not ours to verify: the #791 state is a live
+`flow.google.com` session *plus* SAPISID *plus* no labs NextAuth token, and a probe of all
+nine profiles on the maintainer's machine (2026-09-14, $0) found none in it. Writing an
+oracle that decides `AUTHENTICATED` blind, where the failure mode is fail-open, is the one
+place this project will not guess. #791 stays open and the auth slice of PR #793 is wanted
+for the next release. `gflow credits` also remains unavailable on migrated accounts — the
+balance surface for that cohort has not been located — and gflow still has no driver for
+the agent-only composer.
+
+See [LIVE_VERIFICATION_v0.74.0.md](LIVE_VERIFICATION_v0.74.0.md).
+
+<details><summary>v0.73.2 — your bug reports become readable again</summary>
+
 **v0.73.2 — alpha.** **Your bug reports become readable again.**
 
 A diagnostics and error-clarity patch. It does **not** fix migrated login (#791) or the
@@ -44,6 +93,8 @@ live: #796's trigger is a macOS Keychain decryption failure and there is no Mac 
 (#768) — a named blocker, and the issue stays open. `gflow credits` still needs a token only the
 labs.google session mints, and accounts served from flow.google.com no longer get one
 (#795).
+
+</details>
 
 <details><summary>v0.73.1 — Google's cookie bar was sitting on the composer</summary>
 
@@ -1055,6 +1106,7 @@ reporter-verified e2e on macOS).
 
 | Milestone | Status |
 |---|---|
+| Every local file the migrated driver uploads is run-unique, so a re-run stops binding a stale look-alike, and the Frames picker is confirmed when it does not commit on the pick — covering `video i2v`, `video r2v` and `image i2i` alike (#792); `gflow credits` stops sending migrated accounts into a re-login loop at the raise site they actually hit (#795); an agent-only `flow.google.com` composer exits 25 `retryable: false` instead of 23 (#799) | ✅ done (v0.74.0) |
 | Four error paths stop lying about what went wrong: a click that never lands reports the actionability condition that failed instead of a bare timeout (#776), a known Flow landing is named rather than blamed on the selector (#756), Google's auth URLs are stripped from error messages (#777), and the post-migration account chooser auto-selects instead of stalling (#763/#764) | ✅ done (v0.73.0) |
 | Google's `glue` consent bar no longer blocks the migrated composer: it is cleared before the driver's first click, rejecting rather than accepting, and a bar that will not go is named as `div.glue-cookie-notification-bar` instead of `span` (#780) | ✅ done (v0.73.1) |
 | Incident bundles from a migrated-host failure stop arriving blank — the composer's `about:blank` park ran before the capture, so every failure shipped `div = 0` and a white screenshot (#792); a missing browser-strategy marker and a token-less labs session stop being reported as network and SAPISID faults (#796, #795) | ✅ done (v0.73.2) |

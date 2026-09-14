@@ -1162,17 +1162,19 @@ class DataIntegrityError(DataStoreError):
 class FrameExtractionError(GFlowError):
     """Raised when the video-chain last-frame extractor cannot produce a frame.
 
-    Covers both the missing-optional-dependency case (PyAV / ``av`` not
-    installed because the ``chain`` extra was skipped) and an undecodable /
-    truncated input video. The remediation points at the install extra so an
-    operator hitting the missing-dependency path can self-serve.
+    Covers both the missing-optional-dependency case (the ``chain`` extra was
+    skipped, so ``av`` and/or ``pillow`` are absent) and an undecodable /
+    truncated input video. The remediation names the extra AND both packages it
+    carries so an operator hitting the missing-dependency path can self-serve —
+    it used to say only "PyAV", which left a missing Pillow undiagnosable (#813).
     """
 
     problem_type = "https://gflow-cli.dev/errors/frame-extraction"
     title = "Last-frame extraction failed"
     _default_remediation = (
-        "Verify input video file is readable and non-corrupt. Ensure "
-        "gflow-cli[chain] dependencies (PyAV) are installed."
+        "Verify input video file is readable and non-corrupt. Ensure the "
+        "gflow-cli[chain] extra and both packages it carries (av, pillow) are "
+        "installed: pip install 'gflow-cli[chain]'"
     )
 
 

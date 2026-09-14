@@ -476,8 +476,8 @@ each link in turn, so total wallclock is the sum of all link waits).
 | `--profile NAME` | default profile | Per-subcommand profile override. |
 | `--json` | off | Emit a machine-readable JSON result. |
 
-The last-frame extractor needs the **`chain` optional extra** (PyAV — no system
-ffmpeg required):
+The last-frame extractor needs the **`chain` optional extra** (PyAV for decoding —
+no system ffmpeg required — plus Pillow to write the seed JPEG):
 
 ```bash
 pip install 'gflow-cli[chain]'

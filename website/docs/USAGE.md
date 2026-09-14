@@ -891,8 +891,12 @@ previous clip**, giving visual continuity with no server-side stitching.
 > `-y` / `--yes`.
 
 > **Requires the `chain` extra.** The last-frame extractor decodes the previous
-> clip with [PyAV](https://pyav.org/) (no system ffmpeg needed). Install it
-> with:
+> clip with [PyAV](https://pyav.org/) (no system ffmpeg needed) and writes the
+> seed JPEG with [Pillow](https://python-pillow.org/); the extra carries both.
+> Without it, `gflow video chain` fails up front with exit `20`
+> (`FrameExtractionError`) before reading the manifest or prompting for cost —
+> on `gflow-cli` ≤ 0.74.0 it was a generic exit `1` instead, and Pillow had to be
+> installed by hand (see [KNOWN_ISSUES.md](../KNOWN_ISSUES.md)). Install it with:
 >
 > ```bash
 > pip install 'gflow-cli[chain]'

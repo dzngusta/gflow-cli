@@ -1203,6 +1203,38 @@ your prompts.
 
 ---
 
+### `gflow-cli[chain]` ≤ 0.74.0 does not install Pillow — `video chain` fails with exit 1
+
+- **Status:** Open on `gflow-cli` ≤ 0.74.0 · **Severity:** High (the command is unusable) · **Affects:** `gflow video chain` · **Tracked:** [#813](https://github.com/ffroliva/gflow-cli/issues/813)
+
+Through 0.74.0 the `chain` extra declared `av` alone, but `gflow_cli/media.py`
+imports `PIL` at module level. So the documented install produced a CLI that
+could not run the command it was installed for:
+
+```console
+$ uvx --isolated --from 'gflow-cli[chain]==0.74.0' gflow video chain one.jsonl --dry-run
+Unexpected error ... file a bug          # exit 1; the real cause is No module named 'PIL'
+```
+
+A missing **`av`** was worse than it looked: `import av` was deferred into the
+decode helper, which only runs *between* links — so it surfaced after link 0 had
+already been generated and **paid for**.
+
+**Workaround on ≤ 0.74.0** — install Pillow alongside the extra:
+
+```bash
+pip install 'gflow-cli[chain]' pillow
+# or:  uv tool install 'gflow-cli[chain]' --with pillow
+```
+
+**Fixed in the next release:** `pillow` ships in the `chain` extra, `av` moved to
+a module-level import so both fail at the same point, and `video chain` now
+raises `FrameExtractionError` (**exit 20**) naming the extra and both packages —
+before the manifest is read, before `--dry-run` prints a plan, and before the
+cost prompt.
+
+---
+
 ### `gflow video chain` outputs N clips, not one file — auto-concat is deferred
 
 - **Status:** Open (by design) · **Severity:** Low · **Affects:** `gflow video chain` (v0.12.0)

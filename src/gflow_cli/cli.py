@@ -313,9 +313,11 @@ def auth_login(profile: str | None, browser: str | None, account: str | None = N
                     )
                 )
     except GFlowError as e:
-        console.print(f"[red]{e}[/red]")
+        # Escape: Rich silently drops an unrecognised `[...]` tag, which would
+        # eat the extra out of any "install gflow-cli[extra]" hint (#813).
+        console.print(f"[red]{escape(str(e))}[/red]")
         if e.remediation_hint:
-            console.print(f"[dim]{e.remediation_hint}[/dim]")
+            console.print(f"[dim]{escape(e.remediation_hint)}[/dim]")
         exit_code = next(
             (code for cls, code in EXIT_CODE_MAP.items() if isinstance(e, cls)),
             1,

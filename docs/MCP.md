@@ -296,7 +296,24 @@ opposite — a warm daemon holding one live Chromium profile, serialized by
 `ProfileLease`. The *protocol* is stateless either way; that flag only governs
 transport bookkeeping we want to keep.
 
-Non-loopback binds (e.g. `--host 0.0.0.0`) require `GFLOW_DAEMON_TOKEN` to be set.
+### Authentication
+
+Set `GFLOW_DAEMON_TOKEN` (alias `GFLOW_CLI_DAEMON_TOKEN`) and **every** request
+to the daemon must present it:
+
+```http
+Authorization: Bearer <token>
+```
+
+A missing header, a non-`Bearer` scheme, or a wrong token is answered `401` with
+`WWW-Authenticate: Bearer` — on `/mcp` and on both halves of the deprecated SSE
+surface (`/sse`, `/messages/`). The comparison is constant-time
+(`hmac.compare_digest`), and auth is the outermost layer, so an unauthenticated
+caller learns nothing about the transport's DNS-rebinding allow-list.
+
+Non-loopback binds (e.g. `--host 0.0.0.0`) **require** the token — `gflow serve`
+refuses to start without one (exit 11). A loopback bind with no token stays
+unauthenticated, which is the local single-user default.
 
 > **Note:** the background `FlowWorker` queue manager and the REST `/api/v1`
 > surface are built as internal foundation but are **not yet wired into**

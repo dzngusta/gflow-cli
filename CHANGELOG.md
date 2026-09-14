@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **`gflow serve` now requires the configured daemon token on every HTTP request.**
+  `GFLOW_CLI_DAEMON_TOKEN` / `GFLOW_DAEMON_TOKEN` previously gated startup only. It is now verified
+  on every request, on both the Streamable HTTP and the deprecated SSE transport, with a
+  constant-time comparison; a missing, malformed or wrong token gets `401` plus a
+  `WWW-Authenticate: Bearer` header and never reaches a tool. Set a token and upgrade if you run
+  `gflow serve` on anything other than the default loopback bind.
+
 ## [0.74.0] — 2026-09-14
 
 ### Added

@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`docs/DISTRIBUTION.md`** — an operational catalog of every channel people install or discover
+  gflow-cli through: audience, how to submit, requirements, status and a last-verified date per
+  row. Every row was checked live. It also records the channels that listed us without being asked
+  (MCP Market, skills.sh with 21 installs, two auto-generated catalogs) and the ones we are not
+  eligible for, with the reason.
+- **`server.json`** — metadata for the official MCP Registry, with `tests/test_server_json.py`
+  pinning version lockstep, the schema's 100-character description cap, the name pattern, the
+  `mcp-name:` ownership token in the README, and that the command it advertises really exists.
+- **A `gflow-cli` console script.** `uvx gflow-cli mcp run` previously failed with uv's own
+  *"Use `uvx --from gflow-cli <EXECUTABLE-NAME>` instead"*, because the console scripts were named
+  `gflow` and `flow`. The MCP Registry builds exactly that `uvx <identifier>` command from the
+  PyPI identifier and has no field for a differing executable name, so a listing would have been
+  broken on arrival.
+
+### Changed
+
+- **PyPI metadata.** The summary described only image-to-video and never mentioned MCP; it now
+  says what the package is. Added `Documentation`, `Repository` and `Changelog` sidebar links,
+  ten trove classifiers (all checked against the official list) and MCP-related keywords.
+- **Dropped "unofficial" as a label** from the summary, README, docs site, `llms.txt`, ROADMAP and
+  the skills. The substance is unchanged and still prominent — the README warning block reads
+  "alpha and reverse-engineered — not affiliated with Google", and `DISCLAIMER.md` is unchanged.
+  It was leading with a negative in the one line PyPI shows in search results.
+
 ## [0.74.0] — 2026-09-14
 
 ### Added

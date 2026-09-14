@@ -106,6 +106,14 @@ One extra Flow rpcid, **`WuwhI`**, fires once mid-poll (t=30.32 → 30.572, 4,92
 request). It is a client-sent `batchexecute` call like the rest, on the same host, and is
 not a push.
 
+> **Scope of this section.** "The only non-`batchexecute` responses" means *the only ones the
+> page listener saw* — the video run predates the context-level listener added in §6. A
+> page-scoped listener misses three responses per run; in the two runs where they were
+> measured, all three land during page load at t≈1.4–4.0 s, well before submit and far
+> outside this run's poll window of t=18.97–56.60. That makes it unlikely they fall between
+> polls, not proven. **What would settle it:** the next video run, with the §6 listener
+> bound — it costs credits, so it waits for a reason to spend them.
+
 ### 4. Nothing on this path is held open — `jwpduf`, `as29s` or the submit
 
 Every one of the eight polls is answered in under 0.81 s (mean 0.538). The pre-registration

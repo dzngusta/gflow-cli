@@ -40,7 +40,30 @@ PRE-REGISTERED READING (written before the run; commit this file before the data
   * `fetch_credits_http` succeeds on this profile
     -> #795's premise no longer holds for this account; re-read #795 before planning.
 
-    python scripts/dev/spike_credits_migrated_surface.py --profile denon82
+RUN 1 (2026-09-14, before v2 existed): `denon82` landed on /about -> UNMEASURED. `ci-probe`
+reached a project; DOM showed no credit text before/after typing; the only credit-shaped wire
+hit was `cPZSdc`, a promotional banner. Two blind spots were then named, not spun:
+  (a) batchexecute payloads are POSITIONAL arrays -- a balance or price is a bare number with
+      no key, invisible to the key scan;
+  (b) the cost line lives in the settings pane, which run 1 never opened.
+
+V2 ADDENDUM (written before run 2):
+  * `--open-settings`: click gflow's own READY_ANCHOR `.settings-trigger-button`, read the
+    visible `.cdk-overlay-pane` text, record responses fired while it is open, close with two
+    Escapes (PANE_CLOSE_ESCAPES). Opening a pane is free; nothing is selected or submitted.
+  * batchexecute bodies >= 1 KB are saved to the gitignored capture, and each is searched for
+    model tokens (veo, omni, nano, imagen, lite, fast, quality) with the integers near them.
+  Readings for v2:
+  * pane text pairs a number with credits -> declared price is readable pre-submit from the
+    DOM (cap on declared price buildable; anchor must be structural).
+  * a body lists model tokens with small integers matching the pane's number -> price is on
+    the wire under that rpcid (decode it; prefer it over DOM text).
+  * a body carries a large integer that matches the account's known plan allowance only if a
+    second source confirms it -> candidate balance; one run is a LEAD, not a finding.
+  * pane opens but shows no number -> price not shown at this state; UNMEASURED for other
+    model/count selections, not absent.
+
+    python scripts/dev/spike_credits_migrated_surface.py --profile ci-probe --open-settings
 """
 
 from __future__ import annotations
@@ -66,6 +89,9 @@ MIGRATED_ROOT = "https://flow.google.com/"
 _WATCHED = ("flow.google.com", "labs.google", "aisandbox-pa.googleapis.com")
 _CREDIT_KEY = re.compile(r'"?([A-Za-z_]*(?:credit|remaining|paygate|Tier)[A-Za-z_]*)"?', re.I)
 _PROMPT = "spike probe, not submitted"
+_MODEL_TOKEN = re.compile(r"(veo|omni|nano|imagen|lite|fast|quality)[^\"]{0,40}", re.I)
+_SETTINGS_TRIGGER = ".settings-trigger-button"  # migrated_composer.READY_ANCHOR
+_PANE = ".cdk-overlay-pane:visible"  # migrated_composer.VISIBLE_OVERLAY
 
 _DOM_JS = r"""
 () => {
@@ -113,7 +139,9 @@ async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--profile", required=True)
     ap.add_argument("--settle", type=float, default=8.0)
+    ap.add_argument("--open-settings", action="store_true")
     args = ap.parse_args()
+    phase = ["load"]
     profile_dir = resolve_profile_dir(args.profile)
     out: dict[str, Any] = {"profile": args.profile, "responses": [], "dom": {}}
 
@@ -135,6 +163,13 @@ async def main() -> int:
             except Exception:  # noqa: BLE001 - redirects and aborted bodies have none
                 body = ""
             entry["size"] = len(body)
+            entry["phase"] = phase[0]
+            if entry["route"].startswith("batchexecute:") and len(body) >= 1024:
+                entry["body"] = body
+                entry["model_numbers"] = [
+                    body[max(0, m.start() - 60) : m.end() + 60]
+                    for m in _MODEL_TOKEN.finditer(body)
+                ][:12]
             keys = sorted({m.group(1) for m in _CREDIT_KEY.finditer(body)})
             if keys:
                 entry["credit_keys"] = keys[:30]
@@ -167,6 +202,32 @@ async def main() -> int:
                 await page.keyboard.type(_PROMPT, delay=20)
                 await page.wait_for_timeout(3000)
                 out["dom"]["project_after_typing"] = await page.evaluate(_DOM_JS)
+                if args.open_settings:
+                    trigger = page.locator(_SETTINGS_TRIGGER).first
+                    if await trigger.is_visible():
+                        step("pane", "open settings (free; nothing selected)")
+                        phase[0] = "settings_open"
+                        await trigger.click()
+                        await page.wait_for_timeout(3000)
+                        panes = page.locator(_PANE)
+                        texts = [await panes.nth(i).inner_text() for i in range(await panes.count())]
+                        out["settings_pane"] = {
+                            "panes": len(texts),
+                            "credit_lines": [
+                                ln.strip()
+                                for t in texts
+                                for ln in t.splitlines()
+                                if re.search(r"\d", ln) and re.search(r"credit", ln, re.I)
+                            ],
+                            "text_sample": [t[:600] for t in texts],
+                        }
+                        for _ in range(2):  # migrated_composer.PANE_CLOSE_ESCAPES
+                            await page.keyboard.press("Escape")
+                            await page.wait_for_timeout(500)
+                        phase[0] = "after_settings"
+                    else:
+                        out["settings_pane"] = "settings trigger not visible (agent mode?)"
+                await editor.click()
                 await page.keyboard.press("Control+A")
                 await page.keyboard.press("Delete")
                 await page.wait_for_timeout(1000)
@@ -190,6 +251,14 @@ async def main() -> int:
             )
         else:
             print(f"dom[{name}] {dom}")
+    pane = out.get("settings_pane")
+    if isinstance(pane, dict):
+        print(f"settings_pane panes={pane['panes']} credit_lines={pane['credit_lines']}")
+    elif pane:
+        print("settings_pane:", pane)
+    for r in out["responses"]:
+        if r.get("model_numbers"):
+            print(f"  MODEL-TOKENS {r['route']} phase={r['phase']} size={r['size']} n={len(r['model_numbers'])}")
     carriers = [r for r in out["responses"] if r.get("credit_keys")]
     routes = sorted({r["route"] for r in out["responses"]})
     print(f"responses watched: {len(out['responses'])}, distinct routes: {len(routes)}")

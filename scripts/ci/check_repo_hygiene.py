@@ -209,7 +209,12 @@ def _check_branch_name(branch: str | None) -> list[str]:
 
 
 def _check_version_agreement() -> list[str]:
-    """pyproject == __init__ == plugin.json == uv.lock — one version, four declarations.
+    """pyproject == __init__ == plugin.json == uv.lock == server.json — one version.
+
+    server.json is the MCP Registry's copy of our metadata. It carries the version twice
+    (top level and inside the PyPI package entry), and the registry never runs the command
+    it describes — so a bump that forgets it publishes a listing pointing at a version that
+    is no longer current, and nothing downstream notices.
 
     pyproject and uv.lock are read with the same anchored-regex style the
     release gate (check_release_artifacts.py) uses — deliberately NOT tomllib,
@@ -246,11 +251,20 @@ def _check_version_agreement() -> list[str]:
         if lock_match is None:
             return ['uv.lock: no [[package]] block for "gflow-cli" found']
         versions["uv.lock"] = lock_match.group(1)
+        # Optional: a fork that does not publish to the MCP Registry has no server.json.
+        # When it is present it declares the version twice, and both must agree.
+        server_path = ROOT / "server.json"
+        if server_path.is_file():
+            server = json.loads(server_path.read_text(encoding="utf-8"))
+            versions["server.json"] = str(server["version"])
+            for i, package in enumerate(server.get("packages", [])):
+                if "version" in package:
+                    versions[f"server.json packages[{i}]"] = str(package["version"])
     except (OSError, KeyError, ValueError) as exc:
         return [f"version-agreement check could not read a source: {exc}"]
     if len(set(versions.values())) > 1:
         listing = ", ".join(f"{src}={ver}" for src, ver in versions.items())
-        return [f"version disagreement — {listing} (bump all four together)"]
+        return [f"version disagreement — {listing} (bump them together)"]
     return []
 
 

@@ -7,6 +7,101 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.74.0] — 2026-09-14
+
+### Added
+
+- **Sponsorship: a Support section, a sponsor hall of fame, and a Funding link on PyPI.** The
+  README gains one-click sponsor links; [docs/SPONSORS.md](docs/SPONSORS.md) lists the tiers and
+  what each one gets. `.github/workflows/sponsors.yml` refreshes the hall of fame daily from GitHub
+  Sponsors, plus a Gold row at the top of both pages, and only ever lists sponsors who chose to
+  sponsor publicly. No CLI or MCP behaviour
+  changes.
+
+### Changed
+
+- **On `flow.google.com`, an agent-only composer now exits `25` (`FlowAgentUiError`) where
+  it previously exited `23` (`UiSelectorDriftError`)** — and reports `retryable: false`
+  rather than inheriting that class's retryable default. Scripts branching on `23` for
+  this failure must add `25`. Nothing else moved: a trigger missing from the DOM is still
+  exit 23. See the `### Fixed` entry below for why
+  ([#799](https://github.com/ffroliva/gflow-cli/issues/799)).
+
+### Fixed
+
+- **Migrated-host i2v: the Frames picker is confirmed when it does not commit on the
+  pick (#792).** On some cohorts Flow's Frames picker no longer closes when an asset is
+  clicked — it waits for its own "Add to prompt" confirm. gflow sat out
+  `FRAME_COMMIT_HIDDEN_S` waiting for an auto-close that never came and raised
+  `UiSelectorDriftError` with the asset already picked, so i2v dispatch failed before
+  submit (no credits spent). The picker is now given a short grace period and, if it is
+  still up, its confirm is clicked. Anchored on `button.detail-add-to-prompt-btn`, a
+  class measured on this exact surface — never on the translated label. Where the pick
+  already commits, nothing changes: a closing picker no longer carries the button.
+- **A re-run of the same start frame no longer binds a stale look-alike (#792).** The
+  Frames picker is searched by display name and an upload is listed under its file name,
+  so attaching the same keyframe twice left two identical library entries; the search
+  could bind the older one and the submit-body check then failed with `eb1hJf does not
+  carry the uploaded start frame`. What is uploaded is now a run-unique copy
+  (`<stem>-<8 hex>.<ext>`), so the search has exactly one match by construction and the
+  library's sort order is no longer trusted. **This applies to every local file this
+  driver uploads on the migrated host** — `video i2v --initial-frame`, `video r2v --ref`
+  and `image i2i --ref` alike, since all three find their upload again by display name.
+  Expect the tagged names when you browse the project's library on flow.google.com.
+
+  Reported, root-caused and verified end-to-end on the affected cohort by **@ai4U23**.
+
+- **`gflow credits` stopped sending migrated accounts to re-login, on the raise site they
+  actually hit (#795).** v0.73.2 fixed the message for a labs session that mints no token.
+  It did not help the cohort that gets a token and has aisandbox-pa reject it, and it could
+  not: the service caught its own accurate verdict and re-derived it through a browser,
+  which fails inside the shared, route-blind aisandbox retry helper and so reported
+  *"aisandbox-pa returned 401 after token refresh — SAPISID cookie missing, expired, or
+  unreadable. Re-run `gflow auth login`"*. Every word of that is wrong here: aisandbox-pa
+  answered, SAPISID is what let labs mint the token, and on a migrated account re-login can
+  roll the profile's strategy marker back and start #791.
+
+  The browser is no longer consulted once aisandbox-pa has **answered**: it asks the same
+  endpoint for the same Bearer and gets the same refusal. The other raise site — labs
+  answering with no token — keeps its browser rescue, because that one is not proven
+  unreachable: httpx sends labs.google cookies only, while the browser carries the full jar
+  and bootstraps a real navigation, which can renew a session httpx cannot. If that rescue
+  fails too, the fast path's diagnosis is what survives, not the route-blind default.
+
+  `gflow credits list` also reports the remediation per profile now. It rendered only the
+  class title, so the multi-profile surface — and `gflow_get_credits(all_profiles=true)`
+  with it — was the one place that still could not say why, or that re-login would not help.
+
+  Measured on a migrated profile: `gflow credits user` went from ~7 s to ~2 s with no
+  browser launch, and across 9 saved profiles `credits list` dropped from 9 Chrome launches
+  to 6 — the 3 on the aisandbox-401 cohort skip it, the rest keep their rescue. Applies to
+  the MCP twin `gflow_get_credits` identically: both doors share the service and the
+  envelope.
+
+  `credits` itself is still unavailable on migrated accounts; the balance surface for that
+  cohort has not been located. #795 stays open for it.
+
+- **The migrated agent-only composer is named before submit instead of reported as
+  selector drift (#799).** Google has put some accounts on a `flow.google.com` composer
+  that has **no classic arm at all** — the prompt box is the agent panel, and aspect,
+  model and count live in Agent settings as defaults rather than per-request controls.
+  gflow waited 30 s for a control that is structurally absent and raised
+  `UiSelectorDriftError` (exit 23), which reads as *our* frontend bug and invites a retry
+  that cannot work.
+
+  It now raises `FlowAgentUiError` — **exit 25, `retryable: false`** — naming the cohort
+  and saying plainly that no flag or profile change helps. The discriminator is the chip:
+  the DOM is identical to #749's recoverable agent mode (settings trigger present under a
+  bare `hidden`), and what separates them is that a recoverable account still has a
+  `button.agent-mode-chip` to turn off while this one has none. A trigger that has left
+  the DOM entirely is unchanged — that is a renamed selector, our bug, and still drift.
+
+  `retryable` moved from `FlowAppError` to the error base to make that possible — its own
+  comment set the condition, *"move it up if, and only if, a second class needs it"*, and
+  this is the second. No existing error's retryability changed.
+
+  Reported with the DOM evidence that made it diagnosable by **@Cstanish127**. gflow-cli
+  still has no driver for that composer; #799 stays open for it.
 ## [0.73.2] — 2026-09-12
 
 ### Fixed
@@ -4919,7 +5014,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.73.2...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.74.0...HEAD
+[0.74.0]: https://github.com/ffroliva/gflow-cli/compare/v0.73.2...v0.74.0
 [0.73.2]: https://github.com/ffroliva/gflow-cli/compare/v0.73.1...v0.73.2
 [0.73.1]: https://github.com/ffroliva/gflow-cli/compare/v0.73.0...v0.73.1
 [0.73.0]: https://github.com/ffroliva/gflow-cli/compare/v0.72.0...v0.73.0

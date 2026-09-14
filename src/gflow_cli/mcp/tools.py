@@ -741,8 +741,9 @@ def _build_video_media_inputs(
         "(resolves to referenceEntities/referenceImages). Reference a SAVED named asset via "
         "@Name; reference an arbitrary one-off image via reference_images. See "
         "docs/REFERENCE_STRATEGIES.md. "
-        "On migrated flow.google.com accounts, use an existing project and local reference "
-        "files; UUID/entity references and image4 are labs-only. "
+        "On accounts served from flow.google.com, use an existing project and local "
+        "reference files; UUID/entity references and image4 are not ported to that "
+        "composer yet and fail before submit; retrying will not clear it. "
         "Returns local file paths to the generated images."
     ),
 )
@@ -1010,8 +1011,11 @@ async def gflow_generate_video(  # NOSONAR
         aspect: Aspect ratio — '9:16' or '16:9'.
         initial_frame: Path to start frame image (required for i2v). On an
             account Google has moved to flow.google.com a **local file** is the
-            only form served there (uploaded through the editor, bound by file
-            name); a Flow media UUID returns the exit-36-equivalent envelope.
+            only form served there — uploaded through the editor, then bound from
+            the Frames picker under a **run-unique** name (``hero.png`` is listed
+            as ``hero-<8 hex>.png``), so a re-run of the same file cannot bind an
+            earlier upload (#792); a Flow media UUID returns the
+            exit-36-equivalent envelope.
         end_frame: Path to end frame image (optional for i2v). Not ported to
             flow.google.com yet — exit-36-equivalent envelope on a moved account.
         reference_images: List of reference image paths (ingredients) for r2v.

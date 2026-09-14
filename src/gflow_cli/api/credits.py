@@ -77,9 +77,11 @@ async def fetch_credits_http(profile_dir: Path) -> CreditsInfo:
             route="auth/session",
             remediation_hint=(
                 "Flow's labs.google session carries no API token for this account. "
-                "On accounts Google has migrated to flow.google.com this is expected "
-                "and re-authenticating will not help — generation still works, but "
-                "`gflow credits` reads a labs-only endpoint. See issue #795."
+                "On accounts Google serves from flow.google.com this is expected and "
+                "re-authenticating will not help — generation still works. `gflow "
+                "credits` needs a token that only the labs.google session mints, and "
+                "this account no longer gets one; check your balance in Flow instead. "
+                "See issue #795."
             ),
         )
 
@@ -94,10 +96,25 @@ async def fetch_credits_http(profile_dir: Path) -> CreditsInfo:
             },
         )
         if response.status_code in {401, 403}:
+            # #795: labs minted a token and aisandbox-pa refused it. SAPISID is not the
+            # cause — it is what let labs mint that token at all — so the class default
+            # sends the user to re-authenticate a credential that is working. Say what
+            # was actually rejected, and do not name a fix we cannot stand behind: on an
+            # account Google has moved to flow.google.com, `gflow auth login` can roll
+            # the profile's browser-strategy marker back and start the #791 spiral.
             raise AisandboxAuthError(
                 detail=f"credits endpoint returned {response.status_code}",
                 status=response.status_code,
                 route="credits",
+                remediation_hint=(
+                    "Flow's labs.google session issued an API token and aisandbox-pa "
+                    "rejected it. Your Google sign-in is not the problem — minting that "
+                    "token is what proves it works. Most commonly Flow now serves this "
+                    "account from flow.google.com, where the aisandbox-pa read endpoints "
+                    "have not answered for us; generation keeps working, and `gflow "
+                    "credits` has no equivalent there yet — check your balance in Flow. "
+                    "A 403 can also be an entitlement or region refusal. See issue #795."
+                ),
             )
         if response.status_code != 200:
             raise FlowApiError(

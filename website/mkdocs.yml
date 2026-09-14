@@ -90,6 +90,7 @@ nav:
       - E2E Testing: E2E_TESTING.md
       - Security: SECURITY.md
       - Known issues: KNOWN_ISSUES.md
+  - Sponsors: SPONSORS.md
 
 plugins:
   - search

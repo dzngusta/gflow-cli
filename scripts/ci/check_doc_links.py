@@ -79,10 +79,29 @@ def check_file(path: Path, repo_root: Path) -> list[tuple[int, str, str]]:
     return broken
 
 
+#: Directories audited WHOLE, rather than file-by-file in ``FILES``. A spike note is
+#: written once and never edited again, so an allowlist that must be extended by hand is
+#: an allowlist that silently stops covering them -- before this, every note under
+#: ``docs/superpowers/spikes/`` was outside the gate, and a green run said nothing about
+#: any of their links. All 34 existing notes pass, so there is no debt being grandfathered.
+GLOB_DIRS: tuple[tuple[str, str], ...] = (("docs/superpowers/spikes", "*.md"),)
+
+
+def _audited(repo_root: Path) -> list[str]:
+    """Every path this gate checks: the explicit list plus the globbed directories."""
+    found = list(FILES)
+    for rel_dir, pattern in GLOB_DIRS:
+        found.extend(
+            p.relative_to(repo_root).as_posix() for p in sorted((repo_root / rel_dir).glob(pattern))
+        )
+    return found
+
+
 def main() -> int:
     repo_root = Path(__file__).resolve().parents[2]
     bad = 0
-    for rel in FILES:
+    audited = _audited(repo_root)
+    for rel in audited:
         path = repo_root / rel
         if not path.exists():
             print(f"{rel}: FILE MISSING")
@@ -94,7 +113,7 @@ def main() -> int:
     if bad:
         print(f"\n{bad} broken link(s)")
         return 1
-    print(f"All links resolved across {len(FILES)} files.")
+    print(f"All links resolved across {len(audited)} files.")
     return 0
 
 

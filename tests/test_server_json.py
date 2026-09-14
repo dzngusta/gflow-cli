@@ -136,7 +136,12 @@ def test_declared_environment_variables_are_real_settings(package: dict[str, Any
         if choices:
             aliases.update(str(c) for c in choices)
 
-    for env in package.get("environmentVariables", []):
+    declared = package.get("environmentVariables", [])
+    assert declared, (
+        "an empty list would make every assertion below vacuous; drop this test instead of "
+        "letting it stand guard over nothing"
+    )
+    for env in declared:
         assert env["name"] in aliases, f"{env['name']} is advertised but is not a Settings field"
         assert not env.get("isSecret"), (
             f"{env['name']} is marked secret; a secret must not be advertised to clients here"

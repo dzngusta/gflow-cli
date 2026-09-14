@@ -28,9 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **PyPI metadata.** The summary described only image-to-video and never mentioned MCP; it now
   says what the package is. Added `Documentation`, `Repository` and `Changelog` sidebar links,
   ten trove classifiers (all checked against the official list) and MCP-related keywords.
-- **Dropped "unofficial" as a label** from the summary, README, docs site, `llms.txt`, ROADMAP and
-  the skills. The substance is unchanged and still prominent — the README warning block reads
-  "alpha and reverse-engineered — not affiliated with Google", and `DISCLAIMER.md` is unchanged.
+- **Dropped "unofficial" as a label** from the PyPI summary, `README.md`, `index.html`, the docs
+  site, `llms.txt`, `ROADMAP.md`, `DISCLAIMER.md`, `AGENTS.md`, `CLAUDE.md`,
+  `skills/gflow-cli/SKILL.md` and `src/gflow_cli/__init__.py`. The substance is unchanged and
+  still prominent: the README warning block reads "alpha and reverse-engineered — not affiliated
+  with Google", and `DISCLAIMER.md` still opens "not affiliated with, endorsed by, sponsored by,
+  or otherwise connected to Google LLC" — only the word "unofficial" left its first sentence.
   It was leading with a negative in the one line PyPI shows in search results.
 
 ## [0.74.0] — 2026-09-14

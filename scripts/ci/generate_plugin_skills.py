@@ -34,6 +34,7 @@ Usage::
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -59,6 +60,28 @@ def render(text: str) -> str:
     return _ESCAPES_REPO.sub(lambda m: f"]({_BLOB}{m.group(1)})", text)
 
 
+def _tracked_files(source_dir: Path) -> list[Path]:
+    """The files git tracks under *source_dir* — never whatever happens to be on disk.
+
+    Walking the directory would pick up anything sitting there locally. On the maintainer's
+    machine that is `skills/video-production/fixtures/*.jpg`, untracked QA images: they are
+    binary, so the generator died on `read_text`. A *text* scratch file in the same position
+    would have been worse — copied into the plugin payload without a murmur and shipped to
+    every user on the next regenerate.
+
+    Asking git is the precise statement of intent: the plugin ships what the repository
+    ships. It also matches how `check_repo_hygiene.py` reasons about the tree.
+    """
+    out = subprocess.run(  # noqa: S603 - fixed argv, no shell, no user input
+        ["git", "ls-files", "-z", "--", str(source_dir)],  # noqa: S607
+        cwd=_REPO,
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    return sorted(_REPO / p for p in out.stdout.split("\0") if p)
+
+
 def _payload() -> dict[Path, str]:
     """Map each destination path to the exact bytes it should contain."""
     out: dict[Path, str] = {}
@@ -67,7 +90,11 @@ def _payload() -> dict[Path, str]:
         if not source_dir.is_dir():
             msg = f"skills/{name}/ does not exist — SHIPPED names a skill that is not there"
             raise SystemExit(msg)
-        for source in sorted(p for p in source_dir.rglob("*") if p.is_file()):
+        tracked = _tracked_files(source_dir)
+        if not tracked:
+            msg = f"skills/{name}/ has no tracked files — nothing to ship"
+            raise SystemExit(msg)
+        for source in tracked:
             text = source.read_text(encoding="utf-8")
             dest = _PLUGIN_SKILLS / name / source.relative_to(source_dir)
             out[dest] = render(text) if source.suffix == ".md" else text

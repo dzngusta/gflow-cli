@@ -207,8 +207,8 @@ gflow tools run creative-director "cat in space" --json   # check "was_expanded"
 
 ### `GFLOW_CLI_DAEMON_TOKEN` (alias: `GFLOW_DAEMON_TOKEN`)
 
-**What:** API token required before `gflow serve` will bind to a non-localhost address (`--host` other than `127.0.0.1`). Without it, non-local binds abort with exit 11.
-**Default:** unset.
+**What:** API token for `gflow serve`. When set, **every** HTTP request to the daemon must carry `Authorization: Bearer <token>` — missing, wrong, or non-`Bearer` credentials are answered `401` with a `WWW-Authenticate: Bearer` header, on both `--transport http` (`/mcp`) and the deprecated `--transport sse` (`/sse` and `/messages/`). It is also required *before* `gflow serve` will bind to a non-localhost address (`--host` other than `127.0.0.1`); without it, non-local binds abort with exit 11.
+**Default:** unset — a loopback bind then serves unauthenticated requests (the local single-user posture), and startup logs `mcp.server.auth_disabled` saying so.
 **Security:** stored as a Pydantic `SecretStr` (since v0.55.0), so a `repr()`/`str()`/`model_dump_json()` of the settings object masks it by construction — on top of the existing logging-boundary redaction. Treat it like any credential: set it via `.env`/environment, never commit it.
 
 ### `GFLOW_MCP_NO_SPEND`

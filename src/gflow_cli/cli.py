@@ -627,7 +627,10 @@ def mcp_setup(target: str) -> None:
     "--host",
     default="127.0.0.1",
     show_default=True,
-    help="Host to bind. Use 0.0.0.0 with caution (requires GFLOW_DAEMON_TOKEN).",
+    help=(
+        "Host to bind. Use 0.0.0.0 with caution (requires GFLOW_DAEMON_TOKEN, "
+        "which every request must then present as 'Authorization: Bearer <token>')."
+    ),
 )
 @click.option("--profile", default=None, help="Profile for the background worker.")
 @click.option(
@@ -647,6 +650,12 @@ def serve(port: int, host: str, profile: str | None, transport: str, no_spend: b
       • MCP-SSE at /sse — DEPRECATED (--transport sse), one cycle only
       • REST /api/v1/* — CRUD + generation queue (planned)
       • Background FlowWorker — sequential generation (planned)
+
+    \b
+    Auth: when GFLOW_DAEMON_TOKEN (or GFLOW_CLI_DAEMON_TOKEN) is set, EVERY
+    request must carry 'Authorization: Bearer <token>' or it is answered 401.
+    A non-loopback --host requires the token and is refused without one; a
+    loopback bind with no token serves unauthenticated requests, as before.
 
     \b
     Example:

@@ -227,3 +227,37 @@ def test_chatgpt_desktop_marketplace_ships_the_curated_payload() -> None:
     """`source.path: ./` published the whole repo tree as the plugin."""
     path = _load(_AGENTS)["plugins"][0]["source"]["path"]
     assert path == "./plugins/gflow", path
+
+
+def test_the_generator_ships_only_what_git_tracks() -> None:
+    """An untracked file sitting in a shipped skill must never reach the payload.
+
+    The generator used to walk the directory, so anything left there locally was fair game.
+    On the maintainer's machine that was `skills/video-production/fixtures/*.jpg` — untracked
+    QA images. Being binary they merely crashed it on `read_text`; an untracked *text* file in
+    the same position would have been copied into the plugin and shipped to every user on the
+    next regenerate, with no gate objecting, because the generator itself put it there.
+    """
+    generator = _generator()
+    fixtures = _REPO / "skills" / "video-production" / "_pytest_untracked"
+    fixtures.mkdir(parents=True, exist_ok=True)
+    binary = fixtures / "scratch.jpg"
+    textual = fixtures / "notes.md"
+    try:
+        binary.write_bytes(b"\xff\xd8\xff\xfe not utf-8")
+        textual.write_text("a local scratch note\n", encoding="utf-8")
+
+        payload = generator._payload()
+
+        assert not any(p.name == "scratch.jpg" for p in payload), (
+            "an untracked binary reached the payload"
+        )
+        assert not any(p.name == "notes.md" for p in payload), (
+            "an untracked text file reached the payload — it would ship to users"
+        )
+        # And the real payload is unaffected.
+        assert {p.name for p in payload} >= {"SKILL.md", "composition.md", "tasks.json"}
+    finally:
+        binary.unlink(missing_ok=True)
+        textual.unlink(missing_ok=True)
+        fixtures.rmdir()

@@ -5,8 +5,9 @@ t2v, x1). The only credit-spending measurement in this line of work.
 **Script:** [`spike_generation_wire_survey.py`](../../../scripts/dev/spike_generation_wire_survey.py)
 `--mode video` — the video arm was pre-registered and committed in `8d4502bb`, **before
 any video data existed**, so the ordering is checkable this time.
-**Evidence:** `scripts/dev/_spike_out/generation_wire_video_ffroliva_20260914_145524.json`
-(gitignored)
+**Evidence:** `scripts/dev/_spike_out/generation_wire_video_ffroliva_20260914_145524.json`,
+plus three `$0` image runs (`generation_wire_image_ffroliva_20260914_16*.json`) that verify
+the instrument and measure its blind spot in §6 — all gitignored.
 **Design:** profile `ffroliva`, project `c5550ed7-…`, **1 run**, full submit→completion
 lifecycle instrumented. One run because each further one costs credits — `--runs` now
 defaults to 1 in video mode for that reason.
@@ -138,6 +139,70 @@ Every `batchexecute` 200 again arrives as `application/json` with **no `content-
 Ordinary chunked transfer of the batchexecute envelope — the same non-finding as the image
 arm, recorded so it is not mistaken for streaming a second time.
 
+### 6. The detector's own blind spot — measured, and it is real
+
+Every survey in this series bound `page.on(...)`. A service worker's fetches are reported on
+the **BrowserContext** instead, so a page-scoped zero could not tell "no such traffic" from
+"traffic on a surface I never bound". Rather than argue it, both listeners were bound at once
+and diffed — whatever the context saw and the page did not **is** the blind spot. Two `$0`
+image runs, identical results:
+
+| | run A | run B |
+|---|---|---|
+| responses seen by `page.on` | 80 | 80 |
+| responses seen by `context.on` | 80 | 80 |
+| **reported to the context, never to the page** | **3** | **3** |
+
+The same three, both times:
+
+| t | response | |
+|---|---|---|
+| ≈1.4 | `play.google.com/log?format=json&hasfast=true&authuser=0` | Google's shared client-logging sink |
+| ≈3.9 | `www.google.com/recaptcha/enterprise/reload?k=…` | reCAPTCHA Enterprise |
+| ≈4.0 | `www.google.com/recaptcha/enterprise/clr?k=…` — **`application/binary`** | reCAPTCHA Enterprise |
+
+And the carrier that motivated the check is confirmed to exist: one **dedicated worker**,
+`www.google.com/recaptcha/enterprise/webworker.js`, in both runs.
+
+**What this corrects.** Surveys #1 and #2 — and this note's own video run — counted
+page-scoped responses, so each of them missed three. Their "zero WebSocket" numbers were
+narrower than they read.
+
+**What it does not change.** None of the three is a channel: two are reCAPTCHA's own
+endpoints and one is a logging sink, all short request/response. And with the wider
+listener plus `Network.webTransport*` handlers registered for the first time in this series,
+the count is **still zero** WebSocket, SSE and WebTransport. So the no-push conclusion
+stands, now measured on a wider surface than it was argued on.
+
+**Still unmeasured, deliberately.** `Target.setAutoAttach` was *not* used: flattened child
+sessions arrive with a `sessionId` Playwright's connection does not route to a `CDPSession`,
+so those events would be dropped silently — a detector that looks armed and is not, which is
+the single failure mode this series keeps guarding against. A socket opened strictly inside a
+worker's own scope and never surfaced to the context therefore remains unobserved. The one
+worker present is reCAPTCHA's, not Flow's.
+
+### 7. The third-party hosts on Flow's pages, named once
+
+`ogads-pa.clients6.google.com` has now been re-derived as "not Flow" in three separate notes.
+Recording the census so the next reader does not pay for it a fourth time — measured on the
+image runs above, and consistent with the video run:
+
+| host | what it is | Flow? |
+|---|---|---|
+| `www.gstatic.com`, `fonts.gstatic.com`, `fonts.googleapis.com`, `ssl.gstatic.com` | static assets and fonts | no |
+| `region1.google-analytics.com`, `www.googletagmanager.com` | GA4 — `/g/collect` beacons are **204 No Content** | no |
+| `play.google.com/log` | Google's shared client-logging sink (`hasfast=true`). Page-scoped on the video run, **context-only** on both image runs | no |
+| `www.google.com/recaptcha/enterprise/*` | reCAPTCHA Enterprise, incl. a dedicated worker and an `application/binary` reply | no |
+| `ogads-pa.clients6.google.com` | the OneGoogle account bar. Its `application/json+protobuf` is **not a Flow wire** | no |
+| `accounts.google.com`, `lh3.google*` | sign-in surface; avatar/media thumbnails | no |
+
+**None of these should be blocked or route-aborted in production**, and gflow has no
+machinery that would: there is no third-party host registry, block list or filter anywhere in
+`src/`, and the only `context.route()` is a narrow generation-payload interception. That
+absence is correct rather than an oversight — this project's whole premise is that Google's
+stack rejects browsers advertising automation, and suppressing a beacon every real Chrome
+session sends is itself the anomaly.
+
 ## What this settles
 
 **There is no push channel on the video path either — and that is now measured, not
@@ -172,23 +237,14 @@ page's own traffic.
 - **`labs.google`'s generation path** — nothing here is served it ([survey #1](2026-09-14-two-domain-protocol-survey.md)).
 - **Per-request HTTP version in this run** — see the instrument note below. No h2/h3 claim is
   made from this capture.
-- **Carriers the instrument cannot see at all.** The detector binds `page.on(...)` plus a
-  **page-target** `Network.enable` with no auto-attach, so a channel opened somewhere other
-  than the page's own context would not appear. Named explicitly, because "zero WebSocket
-  events" is only as wide as the listener:
-  - **Workers.** This very capture loads `recaptcha/enterprise/webworker.js` (t=1.538), so
-    workers demonstrably run here. A socket or fetch opened *inside* a dedicated worker, or
-    by a service worker, is scoped to its own target.
-  - **`WebTransport`.** No `Network.webTransport*` handler is registered. Neither survey #1
-    nor #2 covered it either (grep for `worker`/`webtransport` across both: no hits), so
-    this is an unlooked-at class across the whole series, not a gap this run introduced.
-  - **Anything below HTTP semantics** — an h3 datagram, a long-lived connection reused for
-    server-initiated frames CDP does not surface as a response.
-
-  None of these would change the *cadence* finding, which rests on the client's own dispatch
-  times. They bound the **"no push channel"** half. *What would settle them:* register
-  `Target.setAutoAttach` with `flatten` and re-run the free image arm — `$0`, and it also
-  widens surveys #1 and #2 retroactively.
+- **Carriers outside the page's own scope** — **now measured, see §6.** The video run above
+  was page-scoped like every earlier survey, so it missed three responses; the widened `$0`
+  image runs found them and found no channel among them. What remains unmeasured after §6 is
+  narrow: traffic strictly inside a worker's scope that never surfaces to the context, and
+  anything below HTTP semantics (an h3 datagram, or server-initiated frames on a reused
+  connection that CDP does not report as a response).
+- None of that bears on the **cadence** finding, which rests on the client's own dispatch
+  times and would be unchanged by any inbound traffic whatsoever.
 
 ## Instrument notes
 

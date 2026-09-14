@@ -81,6 +81,12 @@ same script answers it with `--runs 1` pointed at a video request.
 > between polls. Zero WebSocket, zero streaming, and each poll answered in under 0.81 s, so
 > it is not a long-poll either. Push is now measured absent on **both** generation paths
 > rather than generalised from one.
+>
+> **It also corrects this note's scope.** The WebSocket counts here are **page-scoped**; a
+> later context-level A/B found **3 responses per run the page listener never sees**
+> (`play.google.com/log`, two `recaptcha/enterprise/*`). None is a channel and the widened
+> detector still counts zero, so "no push on the image path" holds — but the number was
+> narrower than it read.
 
 Also not measured: any account other than `ffroliva`; the `labs.google` generation path
 (nothing here is served it — see survey #1); and whether a long-held `ogiZ0b` behaves the

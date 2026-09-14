@@ -185,6 +185,12 @@ async def run_once(client: Any, project_id: str, run: int, mode: str) -> dict[st
         "Network.webSocketFrameReceived",
         "Network.webSocketHandshakeResponseReceived",
         "Network.eventSourceMessageReceived",
+        # WebTransport: never looked for by ANY spike in this series until now, so its
+        # absence had only ever been assumed. It is a distinct carrier from WebSocket
+        # and would not have raised a single event above.
+        "Network.webTransportCreated",
+        "Network.webTransportConnectionEstablished",
+        "Network.webTransportClosed",
     ):
         cdp.on(
             name,
@@ -222,6 +228,7 @@ async def run_once(client: Any, project_id: str, run: int, mode: str) -> dict[st
             if sent is not None:
                 events[-1]["sent_t"] = sent
                 events[-1]["in_flight_s"] = round(events[-1]["t"] - sent, 3)
+            page_seen.add(resp.request)
         except Exception:  # noqa: BLE001 — a torn-down response is not a finding
             return
 
@@ -229,6 +236,49 @@ async def run_once(client: Any, project_id: str, run: int, mode: str) -> dict[st
         websockets.append(
             {"t": round(time.monotonic() - t0, 3), "event": "pw.websocket", "url": ws.url}
         )
+
+    # --- The blind-spot A/B -------------------------------------------------------
+    # Everything above binds the PAGE. A service worker's fetches are reported on the
+    # BrowserContext instead, and a `page.on` count therefore cannot distinguish "no
+    # such traffic" from "traffic on a surface I never bound" -- which is precisely
+    # what a zero-WebSocket claim rests on. So bind the context too and DIFF them:
+    # whatever the context saw and the page did not IS the blind spot, measured rather
+    # than argued. Requests are matched by object identity, the same property that made
+    # `sent_at` correct.
+    #
+    # Not `Target.setAutoAttach`: flattened child sessions arrive with a sessionId
+    # Playwright's connection does not route to a CDPSession, so the events would be
+    # dropped silently -- a detector that looks armed and is not, which is the one
+    # failure mode this whole series keeps guarding against. The context listener is
+    # first-class API and needs no such trust.
+    page_seen: set[Any] = set()
+    ctx_rows: list[dict[str, Any]] = []
+    workers: list[dict[str, Any]] = []
+
+    def _on_ctx_response(resp: Any) -> None:
+        try:
+            url = resp.url
+            ctx_rows.append(
+                {
+                    "t": round(time.monotonic() - t0, 3),
+                    "req": resp.request,  # stripped before serialising
+                    "status": resp.status,
+                    "host": url.split("/")[2] if "//" in url else "",
+                    "kind": _classify(resp.headers.get("content-type", "")),
+                    "url": url[:200],
+                }
+            )
+        except Exception:  # noqa: BLE001
+            return
+
+    def _note_worker(w: Any, scope: str) -> None:
+        workers.append({"t": round(time.monotonic() - t0, 3), "scope": scope, "url": str(w.url)})
+
+    def _on_worker(w: Any) -> None:
+        _note_worker(w, "dedicated")
+
+    def _on_sw(w: Any) -> None:
+        _note_worker(w, "service")
 
     # Request DISPATCH time, not just response arrival. Without it a reply that lands
     # 32 s after submit is indistinguishable between "sent late" and "held open for
@@ -252,6 +302,10 @@ async def run_once(client: Any, project_id: str, run: int, mode: str) -> dict[st
     page.on("request", _on_request)
     page.on("response", _on_response)
     page.on("websocket", _on_websocket)
+    page.on("worker", _on_worker)
+    context = page.context
+    context.on("response", _on_ctx_response)
+    context.on("serviceworker", _on_sw)
 
     error = None
     try:
@@ -324,9 +378,15 @@ async def run_once(client: Any, project_id: str, run: int, mode: str) -> dict[st
         #
         # Detach BEFORE snapshotting: the page is pooled, and a listener left attached
         # appends into THIS run's arrays (survey #1's evidence was corrupted exactly so).
+        # The CONTEXT ones matter more, not less: the context outlives every page in the
+        # pool, so one left behind leaks across runs AND across whatever the client does
+        # next.
         page.remove_listener("request", _on_request)
         page.remove_listener("response", _on_response)
         page.remove_listener("websocket", _on_websocket)
+        page.remove_listener("worker", _on_worker)
+        context.remove_listener("response", _on_ctx_response)
+        context.remove_listener("serviceworker", _on_sw)
         try:
             await cdp.detach()
         except Exception:  # noqa: BLE001
@@ -353,6 +413,28 @@ async def run_once(client: Any, project_id: str, run: int, mode: str) -> dict[st
     for rpcid in {str(e["rpcid"]) for e in polls}:
         ts = [e.get("sent_t", e["t"]) for e in polls if e["rpcid"] == rpcid]
         per_rpcid_gaps[rpcid] = [round(b - a, 3) for a, b in zip(ts, ts[1:], strict=False)]
+    # The blind-spot diff. `context_only` is every response the BrowserContext reported
+    # that the page listener never saw -- service-worker fetches being the class that
+    # motivated this. An empty list is the first POSITIVE evidence that binding the page
+    # was sufficient; a non-empty one is the traffic every earlier survey missed.
+    context_only = [
+        {k: v for k, v in row.items() if k != "req"}
+        for row in ctx_rows
+        if row["req"] not in page_seen
+    ]
+    # Third-party census: which non-Flow hosts this run talked to, and how often. Named
+    # rather than counted one-off, because `ogads-pa.clients6.google.com` has now been
+    # re-derived as "not Flow" three separate times across this series.
+    #
+    # Counted over page AND context-only rows. Page-scoped alone reproduces the very bug
+    # `context_only` exists to expose: measured here, `play.google.com/log` reached the
+    # context and not the page, so a page-scoped census silently omitted the host whose
+    # identity was the open question.
+    third_party: dict[str, int] = {}
+    for e in [*events, *context_only]:
+        host = str(e.get("host", ""))
+        if host and "flow.google.com" not in host:
+            third_party[host] = third_party.get(host, 0) + 1
     return {
         "run": run,
         "error": error,
@@ -360,6 +442,11 @@ async def run_once(client: Any, project_id: str, run: int, mode: str) -> dict[st
         "duration_s": round(time.monotonic() - t0, 2),
         "websocket_events": len(websockets),
         "websocket_detail": websockets[:20],
+        "workers": workers,
+        "page_responses": len(events),
+        "context_responses": len(ctx_rows),
+        "context_only": context_only,
+        "third_party_hosts": dict(sorted(third_party.items(), key=lambda kv: -kv[1])),
         "stream_hits": [e for e in events if e.get("kind") == "STREAM"],
         "binary_wire_hits": [e for e in events if e.get("kind") == "BINARY_WIRE"],
         "no_content_length_200s": [

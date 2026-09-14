@@ -61,6 +61,13 @@ rooms:
 #   * Worktrees (_wt, *-wt) are the same code checked out twice — duplicate mass.
 # Memory holds what is NOT recoverable from the repo: decisions, root causes,
 # architecture rationale, conventions. Prose and CI config only.
+#
+# Five of these are INERT today -- .scss, .ipynb, .lock, .log and *output*.log are
+# not in the miner's readable-extension set, so they cannot match anything. They stay
+# on purpose: they are defensive against the miner widening that set, and the failure
+# they guard is the one measured above (build logs alone produced 29,599 drawers in
+# another repo). Dead config that prevents a known swamp is cheaper than rediscovering
+# the swamp. Noted here so the next reviewer does not re-derive it.
 exclude_patterns:
   - "**/node_modules/**"
   - "**/.venv/**"

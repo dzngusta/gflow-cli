@@ -116,9 +116,14 @@ s3 = [
     "universal_pathlib>=0.2.5",
     "s3fs>=2024.2.0",
 ]
-# Video-chain extra — PyAV for the last-frame extractor (no system ffmpeg needed).
+# Video-chain extra — everything `gflow video chain` imports. PyAV decodes the
+# previous clip (no system ffmpeg needed) and Pillow writes the seed JPEG; both
+# are imported at module level by media.py, so both belong here. Shipping `av`
+# alone made the documented install command produce a CLI that could not run
+# `video chain` at all (#813).
 chain = [
     "av>=12",
+    "pillow>=12.3.0",
 ]
 # Patchright engine extra — opt-in, drop-in patched Playwright (Chromium) that
 # avoids the Runtime.enable CDP leak on the headed path. Selected via

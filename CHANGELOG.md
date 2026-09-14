@@ -49,6 +49,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   channels now point at the same curated two-skill payload under `plugins/gflow/`, generated from
   `skills/` by `scripts/ci/generate_plugin_skills.py` with a `--check` drift gate in CI.
 
+- **Remediation hints naming an extra rendered without the extra.** Rich reads `[chain]` in an
+  interpolated value as a style tag and silently drops it, so `pip install 'gflow-cli[chain]'`
+  printed as `pip install 'gflow-cli'` — advice that reinstalls what you already have. The same
+  applied to `gflow-cli[patchright]`. Only brackets whose first character is `[a-z#/@]` are
+  affected, which is exactly the shape of a package extra. Every site that renders error text
+  through Rich now escapes it, and `tests/test_rich_markup_safety.py` fails the build if a new one
+  appears. `--json` was never affected.
+
+- **`gflow video chain` was unusable on a clean `gflow-cli[chain]` install (#813).** The extra
+  installed `av` but not Pillow, while `media.py` imports `PIL` at module level — so
+  `uvx --from 'gflow-cli[chain]==0.74.0' gflow video chain one.jsonl --dry-run` died on
+  `No module named 'PIL'`, surfaced as a generic exit `1` *"Unexpected error… file a bug"*,
+  immediately after the user installed the documented extra. `pillow>=12.3.0` now ships in the
+  `chain` extra alongside `av`.
+- **A missing `av` used to fail only AFTER a paid clip.** `import av` sat inside
+  `media._decode_frame`, which runs between links — so the missing extra surfaced once link 0
+  had already been generated and billed. It is now a module-level import beside `PIL`, and the
+  import block at the top of `video chain` is guarded: either missing package is a typed
+  `FrameExtractionError` (exit `20`) raised *before* the manifest is read, before `--dry-run`
+  prints a plan, and before the cost prompt. Nothing is submitted and no browser is launched.
+  `FrameExtractionError`'s remediation now names the extra **and both** packages (`av`,
+  `pillow`); it previously said only "PyAV", which left a missing Pillow undiagnosable.
+- **Error text containing `[...]` was silently truncated on the console.** `detail` and
+  `remediation_hint` were interpolated into Rich markup unescaped, so Rich read `[chain]` as an
+  unknown style tag and dropped it — turning every `install gflow-cli[chain]` hint into
+  `install gflow-cli`, advice that reinstalls what the user already has. Both error render
+  paths now escape. `--json` was never affected.
 ### Security
 
 - **`gflow serve` now requires the configured daemon token on every HTTP request.**

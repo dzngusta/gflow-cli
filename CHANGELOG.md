@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Installable as a Claude Code plugin.** `/plugin marketplace add ffroliva/gflow-cli` then
+  `/plugin install gflow@gflow-cli` installs the `gflow-cli` and `video-production` skills and
+  registers the MCP server in one step. The plugin ships **disabled** and asks you to acknowledge
+  that video generation bills your Google account before it runs, because Claude Code starts a
+  plugin's MCP servers automatically on enable with no prompt of its own.
+
+### Fixed
+
+- **The Codex and ChatGPT-desktop plugin manifests shipped every skill in `skills/`**, including
+  maintainer-only ones (`release`, `check`, `pr-council-review`, `sonar`, `doc-review`). All three
+  channels now point at the same curated two-skill payload under `plugins/gflow/`, generated from
+  `skills/` by `scripts/ci/generate_plugin_skills.py` with a `--check` drift gate in CI.
+
 ## [0.74.0] — 2026-09-14
 
 ### Added

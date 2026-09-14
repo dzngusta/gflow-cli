@@ -176,6 +176,42 @@ traceback go to the server-side structured log (`mcp.tool.unexpected_error`).
 
 ## 4. Setup Instructions
 
+### Claude Code — the plugin (one step)
+
+```
+/plugin marketplace add ffroliva/gflow-cli
+/plugin install gflow@gflow-cli
+```
+
+This installs the `gflow-cli` and `video-production` skills **and** registers this MCP server,
+so there is nothing further to configure.
+
+> **It ships disabled on purpose.** Claude Code starts a plugin's MCP servers automatically
+> when the plugin is enabled — there is **no separate prompt for the server itself**. This server
+> drives your own signed-in Google account, and Veo video generation bills your credits. So the
+> plugin sets `defaultEnabled: false`: installing it does not start anything, and enabling it is
+> a deliberate act. Images and composition cost nothing; only video spends.
+>
+> The plugin also declares a required `userConfig` acknowledgement, which Claude Code prompts for
+> when you enable it in the UI. Be aware that it is a **prompt, not an enforcement gate** —
+> `claude plugin enable` on the command line succeeds without it. `defaultEnabled: false` is the
+> control that actually holds.
+>
+> **The hard guarantee, if you want one, is `--no-spend`.** It is not a policy the model is asked
+> to respect: the credit-spending tools are never registered, so they do not appear in
+> `tools/list` at all. Register the server yourself with `gflow mcp run --no-spend` (see the
+> manual setup below) instead of using the bundled entry.
+
+The plugin runs `gflow mcp run`, so `gflow` must be on your `PATH` (`uv tool install gflow-cli`)
+and you must have authenticated once with `gflow auth login --browser chrome`.
+
+> **Which revision you get.** `/plugin marketplace add ffroliva/gflow-cli` reads the marketplace
+> from the repository's **default branch**, which in this project is `develop` — the integration
+> branch, not the last release. So the plugin you install tracks `develop`, while the version
+> string in its manifest and the documentation links inside its skills both point at the last
+> released state. If you want a released revision, install from a tag instead of the default
+> branch, or use the manual MCP setup below and a pinned `gflow-cli` from PyPI.
+
 ### Claude Desktop Integration
 Run the configuration helper command in your terminal:
 ```bash

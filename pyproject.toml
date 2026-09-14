@@ -1,21 +1,55 @@
 [project]
 name = "gflow-cli"
 version = "0.74.0"
-description = "Unofficial CLI for Google Flow — drive Veo image-to-video generations from the terminal."
+description = "CLI and MCP server for Google Flow — drive Veo text-to-video, image-to-video and Imagen image generation from the terminal."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
 authors = [{ name = "Flavio Oliva", email = "ffroliva@gmail.com" }]
-keywords = ["google", "flow", "veo", "video", "ai", "cli"]
+# PyPI search matches on these, and every downstream catalog copies the summary
+# above verbatim. Both previously described only image-to-video and never
+# mentioned MCP, which is half of what this package is.
+keywords = [
+    "google-flow",
+    "flow",
+    "veo",
+    "imagen",
+    "mcp",
+    "model-context-protocol",
+    "mcp-server",
+    "text-to-video",
+    "image-to-video",
+    "video-generation",
+    "ai-video",
+    "generative-ai",
+    "ai",
+    "cli",
+    "google",
+    "video",
+    "playwright",
+]
+# Every entry is checked against the official trove list; an invented classifier
+# fails the upload outright. Keep "Development Status :: 3 - Alpha" in step with
+# how the README describes the project.
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
+    "Framework :: AsyncIO",
+    "Framework :: Pydantic :: 2",
     "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
     "License :: OSI Approved :: MIT License",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Graphics",
     "Topic :: Multimedia :: Video",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Utilities",
+    "Typing :: Typed",
 ]
 
 dependencies = [
@@ -104,9 +138,20 @@ patchright = [
 [project.scripts]
 gflow = "gflow_cli.cli:main"
 flow = "gflow_cli.cli:main"
+# Third alias, and it earns its keep: `uvx <name>` runs the console script whose
+# name matches the *package*, so without this `uvx gflow-cli mcp run` fails with
+# uv's own "Use `uvx --from gflow-cli <EXECUTABLE-NAME>` instead" (verified against
+# 0.74.0). The MCP registry's server.json builds exactly that `uvx <identifier>`
+# command from the PyPI identifier and has no field for a differing executable
+# name, so a listing without this alias would be broken on arrival. It is also
+# what a user types first, the package being what they just installed.
+gflow-cli = "gflow_cli.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/ffroliva/gflow-cli"
+Documentation = "https://ffroliva.github.io/gflow-cli/"
+Repository = "https://github.com/ffroliva/gflow-cli"
+Changelog = "https://github.com/ffroliva/gflow-cli/blob/main/CHANGELOG.md"
 Issues = "https://github.com/ffroliva/gflow-cli/issues"
 Funding = "https://github.com/sponsors/ffroliva"
 

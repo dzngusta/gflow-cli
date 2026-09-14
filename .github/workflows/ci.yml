@@ -199,6 +199,9 @@ jobs:
       - name: Council memory (every cited slug resolves, every file is cited)
         run: uv run python scripts/ci/check_council_memory.py
 
+      - name: Plugin skills in sync (curated payload, no maintainer-only skill shipped)
+        run: uv run python scripts/ci/generate_plugin_skills.py --check
+
       - name: Lint
         run: uv run ruff check src tests
 

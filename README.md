@@ -1,6 +1,8 @@
+<!-- mcp-name: io.github.ffroliva/gflow-cli -->
+
 # gflow-cli
 
-> Unofficial Python CLI for Google Flow. Drive [Veo](https://labs.google/fx/tools/flow) (image-to-video, text-to-video) and Imagen (text-to-image) from your terminal: scripted, batched, pipeline-ready.
+> Python CLI and MCP server for Google Flow. Drive [Veo](https://labs.google/fx/tools/flow) (image-to-video, text-to-video) and Imagen (text-to-image) from your terminal: scripted, batched, pipeline-ready.
 
 [![PyPI version](https://img.shields.io/pypi/v/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
 [![CI](https://github.com/ffroliva/gflow-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/ffroliva/gflow-cli/actions/workflows/ci.yml)
@@ -20,7 +22,7 @@
 
 <!-- sponsors-gold:end -->
 
-> ⚠️ **Read this before you install.** gflow-cli is **unofficial, alpha, and reverse-engineered — not affiliated with Google**. It drives a headed browser on *your own* Google Flow session, so treat it as your own account risk: automation is subject to Google's ToS, and endpoints or UI can change without notice. It works with **any Google account** that has Flow access, and every generation bills against your account's Flow credit allowance. Read the full [DISCLAIMER](DISCLAIMER.md).
+> ⚠️ **Read this before you install.** gflow-cli is **alpha and reverse-engineered — not affiliated with Google**. It drives a headed browser on *your own* Google Flow session, so treat it as your own account risk: automation is subject to Google's ToS, and endpoints or UI can change without notice. It works with **any Google account** that has Flow access, and every generation bills against your account's Flow credit allowance. Read the full [DISCLAIMER](DISCLAIMER.md).
 >
 > 🛡️ **"Will this get my account flagged?"** The honest, specific answer — what the tool does to stay unremarkable (headed real Chrome, randomised interaction timing, paced submissions), what it deliberately does **not** do (no proxies, no fingerprint spoofing, no pretending it isn't automation), what you can tune, and what we cannot promise — is in [docs/ACCOUNT_SAFETY.md](docs/ACCOUNT_SAFETY.md).
 >
@@ -115,6 +117,25 @@ gflow-cli ships four agent entry points. Pick the one your tool reads first.
 | [**CLAUDE.md**](CLAUDE.md) | Claude Code's auto-loaded memory | Claude Code |
 | [**llms.txt**](llms.txt) | LLM-readable summary (llmstxt.org format) | Paste into ChatGPT, Claude, or Gemini to onboard the model |
 | [`skills/gflow-cli/SKILL.md`](skills/gflow-cli/SKILL.md) | Claude Code Skill | Symlink into `~/.claude/skills/` |
+
+### Install the plugin (Claude Code)
+
+One step, and you get the `gflow-cli` and `video-production` skills plus the MCP server:
+
+```
+/plugin marketplace add ffroliva/gflow-cli
+/plugin install gflow@gflow-cli
+```
+
+The plugin ships **disabled**. Claude Code starts a plugin's MCP servers automatically once a
+plugin is enabled, with no prompt of its own — and this server drives your own Google account,
+where Veo video generation bills your credits. So installing it starts nothing, and enabling it
+is a deliberate act. Images and composition are free; only video spends. For a hard guarantee,
+register the server yourself with `gflow mcp run --no-spend`, which never registers the
+credit-spending tools at all. See [docs/MCP.md](docs/MCP.md) for the details, including which
+revision `/plugin marketplace add` gives you.
+
+Codex users: `codex plugin marketplace add .` then `codex plugin add gflow@gflow-cli`.
 
 Onboard any agent in one line. Paste this into your agent of choice:
 

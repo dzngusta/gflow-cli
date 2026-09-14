@@ -18,6 +18,7 @@ Welcome to the `gflow-cli` documentation. This index is the routing layer: it te
 | [CHANGELOG](../CHANGELOG.md) | Version-by-version user-visible changes | Upgrading or auditing what shipped |
 | [KNOWN_ISSUES](../KNOWN_ISSUES.md) | Open / mitigated / resolved issues with workarounds | Before opening a bug report; when something feels off |
 | [DISCLAIMER](../DISCLAIMER.md) | Legal scope, takedown policy, prohibited uses | Before deploying anywhere non-trivial |
+| [docs/SPONSORS.md](SPONSORS.md) | Sponsorship tiers, what each gets, and the sponsor hall of fame (refreshed daily by `.github/workflows/sponsors.yml`) | You want to support the project, or check what a tier promises |
 | [LICENSE](../LICENSE) | MIT license text | Always |
 | [CONTRIBUTING](../CONTRIBUTING.md) | The development lifecycle a PR is reviewed against (phase → skill → artifact), TDD workflow, test categories, coverage targets | Before opening a PR — and before pointing a coding agent at the repo |
 | **[docs/DEVELOPMENT.md](DEVELOPMENT.md)** | Branching model, PR protocol, e2e gate, version bump protocol, AI-assisted workflow | Understanding the end-to-end dev process |

@@ -27,6 +27,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from rich.markup import escape
+
 _SRC = Path(__file__).resolve().parents[1] / "src" / "gflow_cli"
 
 #: Call targets whose first argument is rendered as Rich markup.
@@ -162,3 +164,32 @@ def test_the_guard_actually_detects_the_bug() -> None:
 
     assert offenders_in(bad) == 1, "the guard missed the exact shape it exists to catch"
     assert offenders_in(good) == 0, "the guard flags the correct, escaped form"
+
+
+def test_the_rendered_output_really_keeps_the_brackets() -> None:
+    """The AST guard proves the call is escaped; this proves the pixels are right.
+
+    Both are worth having. A structural guard can be satisfied by an `escape()` that is applied
+    to the wrong expression, and a behavioural test alone does not stop the pattern reappearing
+    at the next call site. This one renders a real `GflowError` through the shared handler and
+    asserts the bracketed extra survives into the output a user sees.
+    """
+    import io
+
+    from rich.console import Console
+
+    from gflow_cli.errors import FrameExtractionError
+
+    exc = FrameExtractionError(detail="no module named 'av'")
+    hint = exc.remediation_hint or ""
+    assert "[chain]" in hint, "the fixture must carry a bracketed extra or it proves nothing"
+
+    buf = io.StringIO()
+    console = Console(file=buf, width=200, no_color=True, highlight=False)
+    console.print(f"[yellow]-> {escape(hint)}[/yellow]")
+    rendered = buf.getvalue()
+
+    assert "gflow-cli[chain]" in rendered, (
+        "Rich ate the bracketed extra; the user is being told to install the package they "
+        f"already have. Rendered: {rendered!r}"
+    )

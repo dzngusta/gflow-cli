@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Sponsorship: a Support section, a sponsor hall of fame, and a Funding link on PyPI.** The
   README gains one-click sponsor links; [docs/SPONSORS.md](docs/SPONSORS.md) lists the tiers and
   what each one gets. `.github/workflows/sponsors.yml` refreshes the hall of fame daily from GitHub
-  Sponsors and only ever lists sponsors who chose to sponsor publicly. No CLI or MCP behaviour
+  Sponsors, plus a Gold row at the top of both pages, and only ever lists sponsors who chose to
+  sponsor publicly. No CLI or MCP behaviour
   changes.
 
 ### Changed

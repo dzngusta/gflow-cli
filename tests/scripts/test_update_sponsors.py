@@ -227,22 +227,53 @@ def test_fetch_follows_pagination() -> None:
     assert len(calls) == 2
 
 
+def test_gold_block_is_empty_until_there_is_a_gold_sponsor() -> None:
+    assert us.render_gold(us.parse([node("silver", amount=250), node("backer", amount=15)])) == ""
+    assert us.render_gold([]) == ""
+
+
+def test_gold_block_shows_only_gold_logos() -> None:
+    block = us.render_gold(
+        us.parse([node("acme", amount=1000, name="Acme"), node("beta", amount=250)])
+    )
+
+    assert 'width="120" alt="Acme"' in block
+    assert "beta" not in block
+    assert "Gold sponsors" in block
+
+
+def test_replace_block_accepts_other_marker_pairs() -> None:
+    text = f"top\n{us.GOLD_START}\n\n{us.GOLD_END}\nrest {us.START}\nx\n{us.END}\n"
+
+    once = us.replace_block(text, "logos", us.GOLD_START, us.GOLD_END)
+
+    assert once == f"top\n{us.GOLD_START}\nlogos\n{us.GOLD_END}\nrest {us.START}\nx\n{us.END}\n"
+
+
 def test_main_rewrites_every_target_and_reports_changes(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     for relative in us.TARGETS:
         path = tmp_path / relative
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(f"# page\n{us.START}\nstale\n{us.END}\n", encoding="utf-8")
+        path.write_text(
+            f"# page\n{us.GOLD_START}\n\n{us.GOLD_END}\n{us.START}\nstale\n{us.END}\n",
+            encoding="utf-8",
+        )
 
     def runner(args: Sequence[str]) -> str:
-        return page([node("friend")], None)
+        return page([node("friend"), node("acme", amount=1000, name="Acme")], None)
 
     assert us.main(root=tmp_path, runner=runner) == 0
     for relative in us.TARGETS:
-        raw = (tmp_path / relative).read_bytes()
-        assert b"friend" in raw
-        assert b"\r\n" not in raw
+        text = (tmp_path / relative).read_bytes().decode("utf-8")
+        assert "\r\n" not in text
+        gold = text.split(us.GOLD_START)[1].split(us.GOLD_END)[0]
+        hall = text.split(us.START)[1].split(us.END)[0]
+        assert "Acme" in gold
+        assert "friend" not in gold
+        assert "friend" in hall
+        assert "Acme" in hall
     assert "updated" in capsys.readouterr().out
 
     assert us.main(root=tmp_path, runner=runner) == 0
@@ -250,7 +281,17 @@ def test_main_rewrites_every_target_and_reports_changes(
 
 
 @pytest.mark.parametrize("relative", us.TARGETS)
-def test_shipped_pages_carry_exactly_one_hall_of_fame_block(relative: str) -> None:
+def test_shipped_pages_carry_exactly_one_of_each_block(relative: str) -> None:
     text = (Path(__file__).resolve().parents[2] / relative).read_text(encoding="utf-8")
 
     assert us.replace_block(text, "probe").count(us.START) == 1
+    assert us.replace_block(text, "probe", us.GOLD_START, us.GOLD_END).count(us.GOLD_START) == 1
+
+
+@pytest.mark.parametrize("relative", us.TARGETS)
+def test_gold_block_sits_above_everything_but_the_page_header(relative: str) -> None:
+    # The Gold tier promises a logo at the TOP; the hall of fame is further down.
+    text = (Path(__file__).resolve().parents[2] / relative).read_text(encoding="utf-8")
+
+    assert text.index(us.GOLD_START) < text.index("\n## ")
+    assert text.index(us.GOLD_START) < text.index(us.START)

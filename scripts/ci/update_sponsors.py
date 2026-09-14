@@ -33,6 +33,9 @@ MAINTAINER = "ffroliva"
 TARGETS = ("README.md", "docs/SPONSORS.md")
 START = "<!-- sponsors:start -->"
 END = "<!-- sponsors:end -->"
+# Gold promises a logo at the TOP of each page, above the hall of fame further down.
+GOLD_START = "<!-- sponsors-gold:start -->"
+GOLD_END = "<!-- sponsors-gold:end -->"
 
 _REPO = Path(__file__).resolve().parents[2]
 _LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
@@ -183,20 +186,31 @@ def render(sponsors: list[Sponsor]) -> str:
     return "\n\n".join(sections)
 
 
-def replace_block(text: str, block: str) -> str:
-    if text.count(START) != 1 or text.count(END) != 1 or text.index(START) > text.index(END):
-        raise ValueError(f"expected exactly one {START} ... {END} marker pair")
-    head, rest = text.split(START, 1)
-    _, tail = rest.split(END, 1)
-    return f"{head}{START}\n{block}\n{END}{tail}"
+def render_gold(sponsors: list[Sponsor]) -> str:
+    """The top-of-page Gold row. Empty, and so invisible, until there is a Gold sponsor."""
+    gold = group(sponsors)["gold"]
+    if not gold:
+        return ""
+    width = next(w for key, _, w in GROUPS if key == "gold")
+    entries = " ".join(_entry(s, width) for s in gold)
+    return f"<p><strong>🥇 Gold sponsors</strong><br>\n{entries}</p>"
+
+
+def replace_block(text: str, block: str, start: str = START, end: str = END) -> str:
+    if text.count(start) != 1 or text.count(end) != 1 or text.index(start) > text.index(end):
+        raise ValueError(f"expected exactly one {start} ... {end} marker pair")
+    head, rest = text.split(start, 1)
+    _, tail = rest.split(end, 1)
+    return f"{head}{start}\n{block}\n{end}{tail}"
 
 
 def main(root: Path = _REPO, runner: Runner = run_gh) -> int:
-    block = render(parse(fetch(runner)))
+    sponsors = parse(fetch(runner))
+    hall, gold = render(sponsors), render_gold(sponsors)
     for relative in TARGETS:
         path = root / relative
         before = path.read_text(encoding="utf-8")
-        after = replace_block(before, block)
+        after = replace_block(replace_block(before, hall), gold, GOLD_START, GOLD_END)
         if after == before:
             print(f"unchanged: {relative}")
             continue

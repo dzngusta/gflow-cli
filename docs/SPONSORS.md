@@ -1,5 +1,9 @@
 # Sponsors
 
+<!-- sponsors-gold:start -->
+
+<!-- sponsors-gold:end -->
+
 gflow-cli is built and maintained by one person. Two things keep it working, and sponsorship pays
 for both:
 
@@ -23,7 +27,7 @@ for both:
 | 🙌 Backer | $15 a month | Your avatar in the hall of fame |
 | 🥉 Bronze | $100 a month | A small logo here and in the README |
 | 🥈 Silver | $250 a month | A medium logo, plus priority issues |
-| 🥇 Gold | $1,000 a month | A large logo, priority issues, and a monthly 30-minute roadmap call |
+| 🥇 Gold | $1,000 a month | A large logo at the top of this page and of the README, priority issues, and a monthly 30-minute roadmap call |
 
 **Priority issues** means a first reply within 2 business days, and your issues handled first. It
 buys order, not exclusivity: a fix that affects everyone ships for everyone. Need an invoice or

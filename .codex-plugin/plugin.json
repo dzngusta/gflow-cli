@@ -14,7 +14,7 @@
     "codex",
     "google-flow"
   ],
-  "skills": "./skills/",
+  "skills": "./plugins/gflow/skills/",
   "interface": {
     "displayName": "gflow-cli",
     "shortDescription": "Develop, validate, review, and operate gflow-cli.",

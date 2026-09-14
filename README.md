@@ -116,6 +116,21 @@ gflow-cli ships four agent entry points. Pick the one your tool reads first.
 | [**llms.txt**](llms.txt) | LLM-readable summary (llmstxt.org format) | Paste into ChatGPT, Claude, or Gemini to onboard the model |
 | [`skills/gflow-cli/SKILL.md`](skills/gflow-cli/SKILL.md) | Claude Code Skill | Symlink into `~/.claude/skills/` |
 
+### Install the plugin (Claude Code)
+
+One step, and you get the `gflow-cli` and `video-production` skills plus the MCP server:
+
+```
+/plugin marketplace add ffroliva/gflow-cli
+/plugin install gflow@gflow-cli
+```
+
+The plugin ships **disabled**, and enabling it asks you to confirm one thing first: its MCP
+server drives your own Google account, and Veo video generation bills your credits. Enable it
+with `/plugin` once you have. Images and composition are free — only video spends.
+
+Codex users: `codex plugin marketplace add .` then `codex plugin add gflow@gflow-cli`.
+
 Onboard any agent in one line. Paste this into your agent of choice:
 
 > *"Read [AGENTS.md](https://github.com/ffroliva/gflow-cli/blob/main/AGENTS.md) and [docs/INDEX.md](https://github.com/ffroliva/gflow-cli/blob/main/docs/INDEX.md), then help me with my Flow batch."*

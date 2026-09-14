@@ -176,6 +176,27 @@ traceback go to the server-side structured log (`mcp.tool.unexpected_error`).
 
 ## 4. Setup Instructions
 
+### Claude Code — the plugin (one step)
+
+```
+/plugin marketplace add ffroliva/gflow-cli
+/plugin install gflow@gflow-cli
+```
+
+This installs the `gflow-cli` and `video-production` skills **and** registers this MCP server,
+so there is nothing further to configure.
+
+> **It ships disabled on purpose.** Claude Code starts a plugin's MCP servers automatically
+> when the plugin is enabled — there is no separate prompt for the server itself. This server
+> drives your own signed-in Google account, and Veo video generation bills your credits, so the
+> plugin sets `defaultEnabled: false` and asks you to acknowledge that before it runs. Images
+> and composition cost nothing; only video spends. Enable it from `/plugin` when you are ready.
+
+The plugin runs `gflow mcp run`, so `gflow` must be on your `PATH` (`uv tool install gflow-cli`)
+and you must have authenticated once with `gflow auth login --browser chrome`.
+
+To pin the server to no-spend, register it by hand instead (below) with `gflow mcp run --no-spend`.
+
 ### Claude Desktop Integration
 Run the configuration helper command in your terminal:
 ```bash

@@ -4,7 +4,10 @@
 `console.print(f"[red]{exc.detail}[/red]")` is a markup **injection site**. Rich parses the
 interpolated value looking for style tags, so a detail string containing `[chain]` or
 `[patchright]` has that fragment read as a style, matched against nothing, and **silently
-dropped**. Measured:
+dropped**. Rich's tag regex only matches a bracket whose first character is a lowercase letter,
+`#`, `/` or `@`, so only those are eaten — `[1]` and `[Claude Desktop]` pass through untouched.
+That is precisely the shape of a package extra, which is why remediation hints were the casualty,
+and why a test asserting on a capitalised token would prove nothing. Measured:
 
     UNESCAPED renders: "-> pip install 'gflow-cli'"
     ESCAPED   renders: "-> pip install 'gflow-cli[chain]'"
@@ -136,7 +139,8 @@ def test_no_unescaped_interpolation_into_rich_markup() -> None:
     offenders = _offenders()
     assert not offenders, (
         "These console.print() f-strings interpolate a value into Rich markup without "
-        "escape(). Rich will silently drop any '[...]' the value contains — which is how "
+        "escape(). Rich will silently drop an `[a-z#/@]`-initial bracket from the value — "
+        "which is how "
         "every `install gflow-cli[chain]` hint rendered as `install gflow-cli`.\n  "
         + "\n  ".join(offenders)
     )

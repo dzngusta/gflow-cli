@@ -457,10 +457,10 @@ def _resolve_profile(profile: str | None) -> str:
     try:
         return profile_store.resolve_profile(None)
     except profile_store.NoProfilesError as exc:
-        _console.print(f"[yellow]{exc}[/yellow]")
+        _console.print(f"[yellow]{escape(str(exc))}[/yellow]")
         sys.exit(2)
     except profile_store.NoDefaultProfileError as exc:
-        _console.print(f"[yellow]{exc}[/yellow]")
+        _console.print(f"[yellow]{escape(str(exc))}[/yellow]")
         sys.exit(2)
 
 

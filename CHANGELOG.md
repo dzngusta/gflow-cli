@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Remediation hints naming an extra rendered without the extra.** Rich reads `[chain]` in an
+  interpolated value as a style tag and silently drops it, so `pip install 'gflow-cli[chain]'`
+  printed as `pip install 'gflow-cli'` — advice that reinstalls what you already have. The same
+  applied to `gflow-cli[patchright]`. Every site that renders error text through Rich now escapes
+  it, and `tests/test_rich_markup_safety.py` fails the build if a new one appears. `--json` was
+  never affected.
+
 - **`gflow video chain` was unusable on a clean `gflow-cli[chain]` install (#813).** The extra
   installed `av` but not Pillow, while `media.py` imports `PIL` at module level — so
   `uvx --from 'gflow-cli[chain]==0.74.0' gflow video chain one.jsonl --dry-run` died on

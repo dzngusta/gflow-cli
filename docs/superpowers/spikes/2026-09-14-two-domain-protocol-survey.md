@@ -98,6 +98,20 @@ Both entry points, both runs, landing on `flow.google.com/about`. Its inability 
 project is **not transient**, corroborating
 [about-redirect-is-stable-for-an-account](2026-09-11-about-redirect-is-stable-for-an-account.md).
 
+> **This note is #1 of three, and its two open holes are now closed.** It only loaded root
+> and idle pages, and said so. Both generation paths were measured afterwards:
+> [#2 — the image path is one held response, no push and no poll](2026-09-14-generation-wire-no-push-channel.md),
+> and [#3 — the video path polls on a fixed 5.00 s client timer, and nothing signals it](2026-09-14-video-poll-is-a-fixed-client-timer.md).
+> Read all three before citing "no push channel on Flow": this one alone does not establish it.
+>
+> **One correction from #3 applies here.** Every WebSocket count in this note is
+> **page-scoped** (`page.on(...)` plus a page-target `Network.enable`). A later A/B bound the
+> BrowserContext as well and found **3 responses per run that the page listener never sees** —
+> `play.google.com/log` and two `recaptcha/enterprise/*` — so "0 WebSocket events" here was
+> measured on a narrower surface than it reads. No channel was among the three, and the
+> widened detector still counts zero WebSocket, SSE and WebTransport, so the conclusion
+> stands; the scope of the number does not.
+
 ## What this changes
 
 **"labs-only" is not a testable capability axis on the profiles surveyed.** labs 308s to

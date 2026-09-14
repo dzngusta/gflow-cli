@@ -175,6 +175,20 @@ rounds); e2e `tests/e2e/test_migrated_host_e2e.py`. Read this before re-mining t
   because the standing rule is the opposite — [[intermediate-signal-is-not-terminal]]
   was written from a null `MZZa6b` reply read as a refusal three times. Images are the
   documented exception, not a counter-example to it.
+- **Both mechanisms are now MEASURED, and neither is push — do not re-open this.**
+  Image: `ogiZ0b` is dispatched once and **held open ~19.7 s**, answering with the
+  finished images; no poll at all. Video: `jwpduf` is a **fixed 5.00 s client timer**
+  owned by Flow's page — dispatch gaps stdev **3.5 ms** over 7 gaps, no collapse at
+  completion, nothing inbound between polls, each poll answered in under 0.81 s. Zero
+  WebSocket / SSE / gRPC on either path, and at idle. So the polling in
+  `migrated_composer.py` is the real mechanism, not a fallback; the driver observes
+  Flow's own traffic and adds none; and the 5 s interval is **a floor we read, not a
+  latency knob we hold**. Any "we could subscribe instead of polling" proposal is
+  refuted by measurement on both paths — spikes
+  `docs/superpowers/spikes/2026-09-14-generation-wire-no-push-channel.md` and
+  `docs/superpowers/spikes/2026-09-14-video-poll-is-a-fixed-client-timer.md`.
+  Still unlooked-at across the whole series: worker/service-worker-scoped traffic and
+  `WebTransport` (the CDP detector binds the page target only).
 - **The migrated page owns the image reCAPTCHA.** The labs client minted a token on the
   pool's bootstrap page before the transport ran; on a moved account that page is the
   `flow.google.com` grid, which carries no `enterprise.js`, so the mint failed before

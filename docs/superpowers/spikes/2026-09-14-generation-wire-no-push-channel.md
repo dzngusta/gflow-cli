@@ -5,7 +5,9 @@ quota only. No video.
 **Script:** [`spike_generation_wire_survey.py`](../../../scripts/dev/spike_generation_wire_survey.py)
 — committed in `ac8bd2b2`, **before any data existed**, so the pre-registered reading is
 checkable by anyone.
-**Evidence:** `scripts/dev/_spike_out/generation_wire_ffroliva_*.json` (gitignored)
+**Evidence:** `scripts/dev/_spike_out/generation_wire_ffroliva_*.json` (gitignored) — that is
+the name these runs wrote; the script now writes `generation_wire_image_*` / `_video_*`, so a
+re-run lands under the new name, not this one.
 **Design:** profile `ffroliva`, one real project, **2 runs**, full submit→completion
 lifecycle instrumented.
 
@@ -66,10 +68,25 @@ not stronger. Images use a **held response**; video uses a **poll loop** (`jwpdu
 in `migrated_composer.py`). Those are different mechanisms, so an absence on one is not an
 absence on the other.
 
-**The video path remains unmeasured for push.** Settling it costs Veo credits. Given images
+**The video path remains unmeasured for push.** ⛔ **SUPERSEDED — it was measured the same
+day; see the block below this paragraph.** Settling it costs Veo credits. Given images
 resolve in a single held call, the question worth paying for is narrow and specific: *does
 anything arrive between `jwpduf` polls, and are the polls a client timer or a reaction?* The
 same script answers it with `--runs 1` pointed at a video request.
+
+> **ANSWERED the same day, and it is a client timer.**
+> [`2026-09-14-video-poll-is-a-fixed-client-timer.md`](2026-09-14-video-poll-is-a-fixed-client-timer.md)
+> — one t2v generation (~10 credits): `jwpduf` dispatches **5.006 s apart, stdev 3.5 ms,
+> total spread 10 ms over seven gaps**, with no collapse at completion and nothing inbound
+> between polls. Zero WebSocket, zero streaming, and each poll answered in under 0.81 s, so
+> it is not a long-poll either. Push is now measured absent on **both** generation paths
+> rather than generalised from one.
+>
+> **It also corrects this note's scope.** The WebSocket counts here are **page-scoped**; a
+> later context-level A/B found **3 responses per run the page listener never sees**
+> (`play.google.com/log`, two `recaptcha/enterprise/*`). None is a channel and the widened
+> detector still counts zero, so "no push on the image path" holds — but the number was
+> narrower than it read.
 
 Also not measured: any account other than `ffroliva`; the `labs.google` generation path
 (nothing here is served it — see survey #1); and whether a long-held `ogiZ0b` behaves the

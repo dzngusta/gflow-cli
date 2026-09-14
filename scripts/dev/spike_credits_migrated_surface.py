@@ -167,8 +167,7 @@ async def main() -> int:
             if entry["route"].startswith("batchexecute:") and len(body) >= 1024:
                 entry["body"] = body
                 entry["model_numbers"] = [
-                    body[max(0, m.start() - 60) : m.end() + 60]
-                    for m in _MODEL_TOKEN.finditer(body)
+                    body[max(0, m.start() - 60) : m.end() + 60] for m in _MODEL_TOKEN.finditer(body)
                 ][:12]
             keys = sorted({m.group(1) for m in _CREDIT_KEY.finditer(body)})
             if keys:
@@ -190,7 +189,9 @@ async def main() -> int:
         if "/about" in page.url or not links:
             out["verdict_hint"] = "UNMEASURED: signed out, /about, or no project grid"
         else:
-            target = links[0] if links[0].startswith("http") else f"https://flow.google.com{links[0]}"
+            target = (
+                links[0] if links[0].startswith("http") else f"https://flow.google.com{links[0]}"
+            )
             step("nav", "first existing project (nothing created)")
             await page.goto(target, wait_until="domcontentloaded", timeout=60_000)
             await page.wait_for_timeout(int(args.settle * 1000))
@@ -210,7 +211,9 @@ async def main() -> int:
                         await trigger.click()
                         await page.wait_for_timeout(3000)
                         panes = page.locator(_PANE)
-                        texts = [await panes.nth(i).inner_text() for i in range(await panes.count())]
+                        texts = [
+                            await panes.nth(i).inner_text() for i in range(await panes.count())
+                        ]
                         out["settings_pane"] = {
                             "panes": len(texts),
                             "credit_lines": [
@@ -258,12 +261,14 @@ async def main() -> int:
         print("settings_pane:", pane)
     for r in out["responses"]:
         if r.get("model_numbers"):
-            print(f"  MODEL-TOKENS {r['route']} phase={r['phase']} size={r['size']} n={len(r['model_numbers'])}")
+            n = len(r["model_numbers"])
+            print(f"  MODEL-TOKENS {r['route']} phase={r['phase']} size={r['size']} n={n}")
     carriers = [r for r in out["responses"] if r.get("credit_keys")]
     routes = sorted({r["route"] for r in out["responses"]})
     print(f"responses watched: {len(out['responses'])}, distinct routes: {len(routes)}")
     for r in carriers:
-        print(f"  CREDIT-SHAPED {r['route']} status={r['status']} size={r['size']} keys={r['credit_keys'][:12]}")
+        keys = r["credit_keys"][:12]
+        print(f"  CREDIT-SHAPED {r['route']} status={r['status']} size={r['size']} keys={keys}")
     if not carriers:
         print("  no credit-shaped keys in any watched response")
     print("verdict_hint:", out.get("verdict_hint", "read the pre-registered table"))

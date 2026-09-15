@@ -69,6 +69,21 @@ def _server_argv(cmd: list[str]) -> list[str]:
     return cmd[cmd.index("--") + 1 :]
 
 
+# --- the proxy that fronts us -------------------------------------------------------
+
+
+def test_the_stdio_server_is_fronted_by_mcp_proxy(cmd: list[str]) -> None:
+    """Glama pings over HTTP; our server speaks stdio. `mcp-proxy` is the bridge.
+
+    The build image installs `mcp-proxy` globally and the successful run logged
+    `starting server on port 8080` from it. Spawning the server without the proxy would
+    still start gflow — and still fail the check, because nothing would be listening.
+    That is the same shape as the ENOENT bug: a container that runs but never answers.
+    """
+    prefix = cmd[: cmd.index("--")] if "--" in cmd else cmd
+    assert prefix == ["mcp-proxy"], f"expected the server to be fronted by mcp-proxy, got {prefix}"
+
+
 # --- the entry point ----------------------------------------------------------------
 
 

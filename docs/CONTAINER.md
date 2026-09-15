@@ -32,8 +32,11 @@ That is the image's entire purpose: **a health check**. It is not a way to run g
 }
 ```
 
-Glama generates the actual Dockerfile from these fields — it clones this repository at the
-default branch's head, runs the build steps, then starts `cmdArguments`. `mcp-proxy` is the
+Glama generates the actual Dockerfile from these fields. It clones this repository at the
+default-branch head **it last synced**, runs the build steps, then starts `cmdArguments`. That
+synced head can be hours old, so press *Repository → Sync Server* before testing a new commit.
+The build is published through Glama's **Auto-Release**; see
+[DISTRIBUTION.md § Glama](DISTRIBUTION.md#glama--listed-2026-09-14-released-2026-09-15). `mcp-proxy` is the
 bridge: Glama pings over HTTP, gflow speaks stdio.
 
 **The spec is guarded by tests.** [`tests/test_glama_build_spec.py`](../tests/test_glama_build_spec.py)
@@ -56,10 +59,11 @@ Glama admin page and read the result.
 
 ## What it provably does
 
-From the passing build (`01a0a3c1-c0a3-7462-bb4b-350a715ca63b`, 31.2 s):
+From build test `01a0a526-1013-7318-a171-937f48fb9a1a` at commit `73a7ad5`, which Glama released
+as `0.75.0` (the first passing build, `01a0a3c1-…`, gave the same result on 0.74.0):
 
 ```
-mcp.server.starting   cli_version 0.74.0
+mcp.server.starting   cli_version 0.75.0
 initialize    →  serverInfo {name: gflow-cli}, protocolVersion 2025-11-25
 tools/list    →  15 tools
 prompts/list  →  2 prompts

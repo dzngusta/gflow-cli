@@ -25,7 +25,7 @@ channel no longer accepts anything).
 |---|---|---|---|---|
 | [PyPI](https://pypi.org/project/gflow-cli/) | Python users, every downstream scraper | `uv publish` (release) | listed | 2026-09-14 |
 | [Official MCP Registry](https://registry.modelcontextprotocol.io) | Agent devs; feeds other registries | `mcp-publisher` CLI | **ready — submit once v0.75.0 is on PyPI** | 2026-09-15 |
-| [Glama](https://glama.ai/mcp) | Broad MCP audience (87k servers) | Web form | **submitted** | 2026-09-15 |
+| [Glama](https://glama.ai/mcp/servers/ffroliva/gflow-cli) | Broad MCP audience (87k servers) | Web form | **listed** · claimed · rated **A** · container build passing | 2026-09-15 |
 | [MCP Market](https://mcpmarket.com/server/gflow-cli) | Consumer discovery | — (crawled us) | **listed** | 2026-09-14 |
 | [skills.sh](https://skills.sh/ffroliva/gflow-cli) | Cross-agent skill users | — (telemetry) | **listed** | 2026-09-14 |
 | [punkpeye/awesome-mcp-servers](https://github.com/punkpeye/awesome-mcp-servers) | The MCP list (95k★) | PR | **submitted** ([#14423](https://github.com/punkpeye/awesome-mcp-servers/pull/14423)) | 2026-09-15 |
@@ -147,6 +147,20 @@ Submitted through *Add Server → Open-Source Server* with the repo URL, name an
 the form returned **"Your server has been submitted for review."** Approval is followed by an
 email asking for a **Dockerfile**, and **only servers that pass its automated checks are indexed
 for search**.
+
+**Approved and listed the same day, then claimed.** The "Dockerfile" is not a file you paste —
+Glama generates one from a **config form** on the server's admin page and clones the repo at the
+default branch's head, so it never touches PyPI. Two builds failed with
+`could not start the proxy Error: spawn gflow ENOENT`: `uv sync` installs console scripts into
+`/app/.venv/bin`, which is never on `PATH`. With the absolute path the build passed in **31.2 s**,
+answering `initialize` and `tools/list` with 15 tools, no browser and no credentials. The spec is
+tracked as [`glama.json`](../glama.json) and guarded by `tests/test_glama_build_spec.py`; the
+container's capabilities and limits are in [CONTAINER.md](CONTAINER.md).
+
+Two numbers on that page are easy to confuse: the admin panel's percentage is internal profile
+completeness (17% → 42% here), while the **public badge is a letter grade** — currently **A** —
+and the badge is what `awesome-mcp-servers` asks for. Claiming required a **GitHub OAuth grant**
+even though the account was created with Google; admin pages and build tests work unclaimed.
 
 **That bar is lower than it looks, and the correction matters.** The first read of this was that a
 container cannot exercise a logged-in Chrome profile, so the listing would exist but stay

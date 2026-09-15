@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.75.0] — 2026-09-15
+
 ### Added
 
 - **Installable as a Claude Code plugin.** `/plugin marketplace add ffroliva/gflow-cli` then
@@ -20,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   row. Every row was checked live. It also records the channels that listed us without being asked
   (MCP Market, skills.sh with 21 installs, two auto-generated catalogs) and the ones we are not
   eligible for, with the reason.
+- **Listed on [cursor.directory](https://cursor.directory/plugins/gflow-cli)**, and submitted to
+  seven more channels: Glama, mcpservers.org, and PRs or issues on `punkpeye/awesome-mcp-servers`,
+  `ComposioHQ/awesome-claude-skills`, `hesreallyhim/awesome-claude-code`,
+  `travisvn/awesome-claude-skills` and `Arnon-hs/open-source`. `DISTRIBUTION.md` carries the
+  status and reference for each, and — equally deliberately — why four channels are closed to a
+  local-stdio server that spends the user's own credits, including a section on why there is no
+  hosted "connector" and what one would actually cost.
 - **`server.json`** — metadata for the official MCP Registry, with `tests/test_server_json.py`
   pinning version lockstep, the schema's 100-character description cap, the name pattern, the
   `mcp-name:` ownership token in the README, and that the command it advertises really exists.
@@ -5092,7 +5101,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.74.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.75.0...HEAD
+[0.75.0]: https://github.com/ffroliva/gflow-cli/compare/v0.74.0...v0.75.0
 [0.74.0]: https://github.com/ffroliva/gflow-cli/compare/v0.73.2...v0.74.0
 [0.73.2]: https://github.com/ffroliva/gflow-cli/compare/v0.73.1...v0.73.2
 [0.73.1]: https://github.com/ffroliva/gflow-cli/compare/v0.73.0...v0.73.1

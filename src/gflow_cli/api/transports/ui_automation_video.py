@@ -35,6 +35,7 @@ from gflow_cli.api.transports._common import (
     generation_error,
     migrated_route,
     offered_menu_labels,
+    raise_if_known_landing,
     raise_if_migrated,
 )
 from gflow_cli.api.transports.drivers.factory import AGENTIC_INDICATOR_SELECTORS
@@ -1586,6 +1587,12 @@ class VideoGenerationMixin:
             MODE_SWITCH_TRIGGER_SELECTORS,
         )
         if trigger is None:
+            # Same gap as the image path: on the labs arm with --project, `_enter_editor`
+            # returned before any readiness gate, so this is the first place that can ask
+            # whether the account can reach Flow at all.
+            await raise_if_known_landing(
+                page, requested="the Flow editor", at="labs.switch_to_video_mode"
+            )
             raise await VideoGenerationMixin._mode_switch_error(page, out_dir, media="video")
         await trigger.click()
         await page.wait_for_timeout(800)

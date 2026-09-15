@@ -239,7 +239,7 @@ class TestPerInstanceRetryability:
         # positional branch, which used to pop named kwargs one at a time and drop this.
         assert is_retryable(errors.FlowApiError(503, "body", retryable=False)) is False
 
-    def test_the_signin_landing_raises_auth_expired(self) -> None:
+    async def test_the_signin_landing_raises_auth_expired(self) -> None:
         """The `"signin"` arm, which only the e2e reached before — and `addopts`
         excludes that, so the offline suite never executed this branch (council D4).
 
@@ -253,14 +253,14 @@ class TestPerInstanceRetryability:
         url = "https://labs.google/fx/api/auth/callback/google?state=s3cr3t&code=4/0Aabc"
         page = type("P", (), {"url": url})()
         with pytest.raises(AuthExpiredError) as exc_info:
-            raise_if_known_landing(page, requested="the Flow gallery", at="test")
+            await raise_if_known_landing(page, requested="the Flow gallery", at="test")
 
         detail = str(exc_info.value)
         assert "https://labs.google/fx/api/auth/callback/google" in detail
         assert "code=" not in detail and "state=" not in detail and "s3cr3t" not in detail
         assert "sign-in page" not in detail, "the family includes callback and /session"
 
-    def test_a_midrun_chooser_hop_raises_the_chooser_error_not_drift(self) -> None:
+    async def test_a_midrun_chooser_hop_raises_the_chooser_error_not_drift(self) -> None:
         """Measured live, not imagined (2026-09-10, `denon82`): a session can land on
         `accounts.google.com` AFTER bootstrap, where `client._handle_account_chooser`
         no longer runs — and the labs gallery sweep then reported a missing
@@ -277,7 +277,7 @@ class TestPerInstanceRetryability:
         )
         page = type("P", (), {"url": url})()
         with pytest.raises(FlowAccountChooserError) as exc_info:
-            raise_if_known_landing(page, requested="the Flow gallery", at="test")
+            await raise_if_known_landing(page, requested="the Flow gallery", at="test")
 
         detail = str(exc_info.value)
         assert "accounts.google.com/v3/signin/accountchooser" in detail
@@ -285,7 +285,7 @@ class TestPerInstanceRetryability:
         assert "New project" not in detail
         assert EXIT_CODE_MAP[FlowAccountChooserError] == 38
 
-    def test_the_about_landing_is_not_flagged_retryable(self) -> None:
+    async def test_the_about_landing_is_not_flagged_retryable(self) -> None:
         """The raise site itself, not just the constructor.
 
         Pins the non-claim: this shape raised exit 23 before (already non-retryable),
@@ -296,7 +296,7 @@ class TestPerInstanceRetryability:
 
         page = type("P", (), {"url": "https://flow.google.com/about"})()
         with pytest.raises(FlowAppError) as exc_info:
-            raise_if_known_landing(page, requested="project abc", at="test")
+            await raise_if_known_landing(page, requested="project abc", at="test")
 
         assert is_retryable(exc_info.value) is False
         assert EXIT_CODE_MAP[FlowAppError] == 31

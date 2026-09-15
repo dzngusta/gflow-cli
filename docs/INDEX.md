@@ -112,6 +112,7 @@ Slash commands for Claude Code, stored in `.claude/commands/gflow/`. All prefixe
 **"Exit code 4 (rate-limit) or 5 (content-policy) — how do I recover?"** → [USER_GUIDE § Journey 12](USER_GUIDE.md#journey-12--recovering-from-contentpolicyerror-or-ratelimiterror)
 **"How do I read the structured log (`error_raised` events)?"** → [USER_GUIDE § Journey 6](USER_GUIDE.md#journey-6--reading-structured-logs-jq-recipes)
 **"What exit code does shell branching see for each error class?"** → [USAGE § Exit codes](USAGE.md#exit-codes)
+**"Exit 39 — gflow says this Google account cannot reach Flow, but I am signed in"** → [USAGE § Exit codes](USAGE.md#exit-codes) (row 39). Flow loaded and routed to its own "no access" screen: the account needs a Google AI Plus/Pro/Ultra or qualifying Workspace plan, plus age verification and a supported region — signing in again cannot change it. How that signal was identified: [spike 2026-09-15](superpowers/spikes/2026-09-15-unentitled-account-signal.md)
 **"Is `v0.5.0a1` a prerelease, and how do I cut a full release?"** → [RELEASE § Prerelease Versus Full Release](../RELEASE.md#prerelease-versus-full-release)
 **"Where is my session stored?"** → [AUTHENTICATION § Session storage](AUTHENTICATION.md#session-storage)
 **"Where do generated files land?"** → [CONFIGURATION § Output paths](CONFIGURATION.md#output-paths)

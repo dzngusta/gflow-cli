@@ -30,6 +30,7 @@ __all__ = [
     "FlowAgentUiError",
     "FlowApiError",
     "FlowAppError",
+    "FlowAccessUnavailableError",
     "FlowAccountChooserError",
     "FlowHostMigratedError",
     "FrameExtractionError",
@@ -832,6 +833,38 @@ class FlowAccountChooserError(GFlowError):
     )
 
 
+class FlowAccessUnavailableError(GFlowError):
+    """Raised when Flow renders its own "you don't have access" screen for this account.
+
+    **Not retryable, and that is the point.** Before this existed the state had no route,
+    so the editor sweep reported the only thing it could see and told the user Google had
+    changed its frontend — measured as an A/B on 2026-09-15, exit 23 before, 39 after.
+    Not 3 or 8 (nothing expired; a re-login cannot buy a subscription) and not 23
+    (nothing drifted; the app loaded and routed to a component built for this state).
+
+    Detected by component, not by URL or status: there is no entitlement field on the
+    wire, ``flow.google.com/`` answers 200 with a client-side hop, and the path varies.
+    The evidence, the four refuted alternatives, and the surfaces this does **not**
+    cover are in ``docs/superpowers/spikes/2026-09-15-unentitled-account-signal.md``.
+
+    The remediation cites Google's eligibility page rather than paraphrasing it: Flow
+    wants age verification, a supported region *and* a paid plan, and only the missing
+    plan was measured here. Asserting which one failed would be the confident guess this
+    class exists to stop.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/flow-access-unavailable"
+    title = "This Google account cannot reach Flow"
+    _default_remediation = (
+        "Google Flow served its unavailable screen for this account. Flow needs a "
+        "Google AI Plus, Pro or Ultra subscription (or a qualifying Workspace plan), "
+        "an age-verified account, and a supported region — check which applies at "
+        "https://support.google.com/flow/answer/16353333 and open "
+        "https://flow.google.com in a browser on this account to confirm. Signing in "
+        "again cannot change it."
+    )
+
+
 class UiModeUnavailableError(GFlowError):
     """Raised when the Flow UI arm a command REQUIRES (``--ui-mode`` /
     ``GFLOW_CLI_UI_MODE``, or inferred — e.g. ``-i`` instructions force agentic)
@@ -1328,6 +1361,11 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     # Direct GFlowError subclass; exit 38 distinguishes account chooser stall
     # from generic errors (1) without parsing stderr.
     FlowAccountChooserError: 38,
+    # FlowAccessUnavailableError: Flow rendered its unavailable screen — this
+    # account has no Flow entitlement. Exit 39 rather than 3/8 (auth) because a
+    # re-login cannot fix it, and rather than 23 because nothing drifted: the
+    # app loaded and routed to a component built for exactly this state.
+    FlowAccessUnavailableError: 39,
     # UiModeUnavailableError (issue #299): a command's required arm (--ui-mode /
     # inferred) couldn't be reached after a best-effort switch. Direct GFlowError
     # subclass — retryable policy abort, distinct from FlowAgentUiError (25).

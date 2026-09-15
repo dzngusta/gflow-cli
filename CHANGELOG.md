@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was not there. The mount is now `${X11_SOCKET:-/tmp/.X11-unix}`, unchanged for Linux, and
   `docker/README.md` documents the WSL invocation plus the two prerequisites that actually
   bite (run it from inside WSL, and enable Docker's WSL integration for that distro).
+- **The container image no longer silently installs a stale gflow.** `docker/Dockerfile`
+  hardcoded `pip install gflow-cli==0.75.0` with nothing tying it to `pyproject.toml`, so
+  the next release would have left the image on the old version while
+  `docker/README.md`'s verification table went on quoting the new one. The version is now
+  an `ARG` gated by `tests/test_dockerfile_version_pin.py`. That gate also asserts the
+  ARG's **position**: declared above the Chrome layer it would invalidate ~1.6 GB of apt
+  cache on every version bump, so the ordering is a cache contract, not style. The base
+  image is now tracked by Dependabot (`docker` ecosystem); Chrome stays unpinned, with the
+  reason and the refresh command written down rather than left implicit.
 - **An MCP agent's `project_name` is finally used.** `gflow_generate_image` and
   `gflow_generate_video` accept a `project_name` and document it as the title for a freshly
   created Flow project, but the worker read a different key (`project_title`) that nothing in

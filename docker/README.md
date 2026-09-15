@@ -81,6 +81,43 @@ Two things to check before blaming the compose file:
   Resources → WSL Integration. Without it the `docker` CLI inside WSL cannot reach the
   daemon at all: `Cannot connect to the Docker daemon at unix:///var/run/docker.sock`.
 
+## Rebuilding is cheap, and which layer moves is deliberate
+
+The image is two layers that matter, in this order:
+
+1. **Chrome + Xvfb** via `apt-get` — most of the ~1.6 GB, and the slow one.
+2. **`pip install gflow-cli==${GFLOW_VERSION}`** — small and fast.
+
+Because the expensive layer comes first, bumping the gflow version reuses it from cache
+and only the last layer rebuilds. A version bump is seconds, not minutes.
+
+That property is fragile in one specific way: **`ARG GFLOW_VERSION` must stay below the
+apt layer.** An ARG declared before an expensive layer invalidates it whenever the value
+changes. Measured 2026-09-15 on a throwaway image, with a unique marker so no stale cache
+entry could match:
+
+| `ARG` placement | expensive layer on a version bump |
+|---|---|
+| after it | `CACHED` |
+| before it | rebuilt |
+
+`tests/test_dockerfile_version_pin.py` asserts the ordering, so the cache contract cannot
+be undone by a tidy-up that moves the ARG next to `FROM`.
+
+### Who owns each input
+
+| Input | Pinned by | Updated by |
+|---|---|---|
+| `python:3.14-slim` base | the `FROM` line | Dependabot (`docker` ecosystem, `/docker`, weekly) |
+| `gflow-cli` | `ARG GFLOW_VERSION` | a release, gated by `tests/test_dockerfile_version_pin.py` |
+| `google-chrome-stable` | not pinned | a rebuild |
+
+Chrome is the deliberate gap. Google's apt repo keeps only the current build, so a pinned
+version stops resolving within weeks — and Dependabot cannot see packages installed by a
+`RUN` in any case. The consequence is worth stating plainly: **that layer caches
+indefinitely, so an image rebuilt from a warm cache keeps whatever Chrome it first
+installed.** `docker compose build --no-cache` (or pruning the cache) is what refreshes it.
+
 ## `serve` refuses to start without a token — on purpose
 
 `docker compose config` **fails** when `GFLOW_CLI_DAEMON_TOKEN` is unset:

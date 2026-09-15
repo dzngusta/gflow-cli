@@ -299,9 +299,20 @@ _MIGRATED_DOM_COUNTS = """({
     ).length,
 })"""
 _MIGRATED_DOM_JS = f"() => {_MIGRATED_DOM_COUNTS}"
-_MIGRATED_SETTLE_JS = (
-    f"() => {{ const c = {_MIGRATED_DOM_COUNTS}; return c.signout_link > 0 || c.signin_cta > 0; }}"
-)
+# Settle on a POST-BOOT signal, never on `signin_cta`. That anchor is in the raw
+# shell Angular serves to everybody — measured — so waiting on it returns
+# instantly, before the app has routed, and the probe then reads the shell and
+# calls a signed-in account anonymous. (It did exactly that: the e2e went from
+# 44.85s/pass to 5.08s/fail the moment the wait included it.)
+#
+# Both survivors are things only the ROUTED app renders: the sign-out anchor on
+# the authenticated arm, `flow-landing-page` on the anonymous one — the latter
+# measured on the warm-control run, which settled at /about with the full
+# flow-landing-* component set.
+_MIGRATED_SETTLE_JS = """() => (
+    document.querySelectorAll('a[href*="SignOutOptions"]').length > 0
+    || document.querySelector('flow-landing-page') !== null
+)"""
 # How long to let Angular boot and route before reading. A timeout is a normal
 # outcome, not an error — it reads as "neither anchor", which fails closed.
 _MIGRATED_SETTLE_MS = 30_000

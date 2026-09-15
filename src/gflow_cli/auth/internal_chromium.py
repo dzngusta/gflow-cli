@@ -31,6 +31,9 @@ _console = Console()
 GEMINI_URL = "https://labs.google/fx/tools/flow?hl=en"
 GOOGLE_REJECTED_BROWSER_ROUTE = "accounts.google.com/v3/signin/rejected"
 POLL_INTERVAL_SECONDS = 3
+# How many times one login may attempt the migrated-host DOM probe. A completed
+# read latches immediately; this budget only covers exceptions.
+_MIGRATED_PROBE_ATTEMPTS = 2
 
 
 def login_launch_kwargs(
@@ -101,7 +104,7 @@ async def poll_session_until_authenticated(
     timeout_at = asyncio.get_running_loop().time() + timeout_seconds
     success = False
     _email: str | None = None
-    migrated_probed = False
+    migrated_attempts = 0
 
     while asyncio.get_running_loop().time() < timeout_at:
         try:
@@ -146,7 +149,7 @@ async def poll_session_until_authenticated(
             )
             if (
                 status.migrated_probe_warranted
-                and not migrated_probed
+                and migrated_attempts < _MIGRATED_PROBE_ATTEMPTS
                 and get_settings().flow_host != "labs.google"
             ):
                 # #791: labs never mints a session for some migrated accounts, so
@@ -157,11 +160,19 @@ async def poll_session_until_authenticated(
                 # and `_is_safe_to_probe_session` above already keeps us out of
                 # an in-flight callback.
                 #
-                # Once per login: a negative does not become positive by asking
-                # again, and this opens a tab in the window the user is using.
-                migrated_probed = True
+                # Bounded, not once-only. A *negative* does not become positive
+                # by asking again, so a completed read latches below — but an
+                # EXCEPTION is not a negative, and latching before the attempt
+                # would let one transient flake disable the fallback for the
+                # remaining ~600 s of the login, re-opening #791 on a fluke.
+                # Two attempts: enough to survive a flake, few enough that a
+                # persistent failure does not open a tab every poll.
+                migrated_attempts += 1
                 try:
-                    if evaluate_migrated_dom(await read_migrated_dom(ctx)):
+                    signed_in = evaluate_migrated_dom(await read_migrated_dom(ctx))
+                    # A completed read is an answer either way — latch it.
+                    migrated_attempts = _MIGRATED_PROBE_ATTEMPTS
+                    if signed_in:
                         status = FlowSessionStatus(
                             outcome=FlowSessionOutcome.AUTHENTICATED,
                             user_email=None,

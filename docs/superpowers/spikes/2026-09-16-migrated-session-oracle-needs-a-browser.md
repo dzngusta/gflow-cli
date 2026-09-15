@@ -102,7 +102,75 @@ service-worker arms are identical, which means the `service_workers="block"` the
 passes is belt-and-braces rather than load-bearing; it stays because it costs nothing and
 removes a whole class of future doubt, not because it was observed to matter.
 
+---
+
+# ⛔ Q6 — RETRACTION: the rendered DOM is NOT server-attested, and this oracle does not work
+
+**Added 2026-09-16, after the e2e went red. Everything below this line about "(a) is
+satisfiable" is WRONG. Read this section before acting on any of it.**
+
+At ~00:05 `profile_ffroliva` rendered `signout_link=1, signin_cta=0` at `/`. At ~01:05 the
+same profile rendered `signout_link=0, signin_cta=1` at `/about` — with the flow.google.com
+cookies still on disk and labs still returning a 691-byte authenticated session with an
+email. `denon82` and `promo-denon82` render the same anonymous shape. Headed and headless,
+stealth flags on and off: **identical in all four arms.** So it is not bot detection and it
+is not headless.
+
+It is the **`/about` redirect** — a known, account-scoped, already-measured phenomenon in
+this repo ([#756](https://github.com/ffroliva/gflow-cli/issues/756),
+[`2026-09-11-about-redirect-is-decided-client-side.md`](2026-09-11-about-redirect-is-decided-client-side.md)),
+which I did not read before designing around it. That spike settles the mechanism:
+
+- The hop is **client-side**, 192 ms after the app's own first navigation commits. No 3xx
+  anywhere; the document resolves to `/project/<id>`, not `/about`.
+- The failing arm's **only** request to `flow.google.com` is the document itself. **Zero
+  `batchexecute`, zero of anything else.** Not "asked and was refused" — *never asked*.
+- And decisively: *"`gflow project list` on `denon82` returns 50 projects **including** the
+  one that redirects. The backend grants access while the frontend declines to open it."*
+
+**Therefore the rendered DOM cannot attest to the session.** The app decides what to render
+without consulting the server about auth at all. `signout_link == 0` means "this account is
+in the `/about` state", which is **not** the same as "this session is dead" — the two are
+routinely different, and #756 exists because of it.
+
+## What that does to the claims above
+
+| Claim | Status |
+|---|---|
+| Q1 / Q2 / Q2b — no browserless oracle; batchexecute 401 with a valid session; `SNlM0e` gone; no identity on the host | **stands** — plain HTTP measurements, unaffected |
+| Q4 — "the rendered DOM separates the arms" | stands as a *correlation*, on one account, for one hour |
+| Q4's mechanism — "server-attested, so it sees revocation" | **REFUTED.** An inference I made from that correlation. #756 measured the mechanism and it is client-side |
+| Q5 — warm control "proves server-attested" | **REFUTED as proof.** A cookie-less copy rendering anonymous is equally explained by the client deciding anonymous. It never demonstrated attestation |
+| "(a) is satisfiable" | **false** |
+
+**Consequence: the fix built on this does not ship.** A probe reading `signout_link` would
+report a perfectly authenticated user as logged out whenever their account is in the
+`/about` state — locking them out of gflow exactly as #791 does. That is the failure this
+work exists to remove, reintroduced by the remedy.
+
+## What I got wrong, as method
+
+Rung 1 of the spike ladder is *"read an existing capture — `docs/superpowers/spikes/` may
+already hold the answer. Free."* Two spikes named `about-redirect` were sitting in that
+directory. I went straight to writing a new probe, measured a real correlation, and then
+asserted a **mechanism** the data never showed — the exact move the spike skill warns
+against. The council did not catch it either; the e2e did, by going red on a live account
+whose state changed underneath it.
+
+## What would settle a replacement
+
+Any candidate oracle must be checked against an account **in the `/about` state** before
+it is believed, because that state is common here and silently mimics "logged out". The
+one signal known to survive it is the backend: `gflow project list` returns projects on a
+redirecting account. A **`batchexecute` read is therefore the lead worth pursuing** — but
+Q2b showed it needs an `at` token that is no longer browserlessly obtainable, so it would
+have to be issued from inside a booted app page rather than over plain HTTP.
+
+---
+
 ## What this means for the design
+
+> ⚠️ **Superseded by Q6 above.** Kept for the record, not as guidance.
 
 **Conditions (a) and (b) cannot both be met today**, and Q4 says which one survives:
 

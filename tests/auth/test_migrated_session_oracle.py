@@ -13,6 +13,7 @@ HTML carries `signin_cta` in BOTH, so only the rendered DOM can decide.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -26,7 +27,7 @@ from gflow_cli.auth.verification import (
     probe_migrated_host_session,
     verify_flow_profile,
 )
-from gflow_cli.errors import SecurityError
+from gflow_cli.errors import AuthLoginTimeoutError, SecurityError
 
 AUTHENTICATED_BODY = (
     '{"user": {"name": "T", "email": "t@example.com"}, "expires": "2026-06-16T08:39:21.000Z"}'
@@ -225,11 +226,16 @@ class TestVerifyFlowProfileIntegration:
             patch(
                 "gflow_cli.auth.verification.probe_migrated_host_session",
                 new=AsyncMock(return_value=None),
-            ),
+            ) as probe,
         ):
             settings.return_value.home = tmp_path
             status = await verify_flow_profile(profile, source="chrome")
         assert status.outcome is FlowSessionOutcome.GOOGLE_SESSION_ONLY
+        # Council D4 proved the outcome assertion alone does NOT discriminate:
+        # with `if result.migrated_probe_warranted:` mutated to `if False:` this
+        # test still passed, because its sibling asserts the same outcome with
+        # the probe never awaited. Without this line it pins nothing.
+        probe.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_a_successful_probe_upgrades_to_authenticated(self, tmp_path: Path) -> None:
@@ -402,3 +408,132 @@ class TestProbeLaunchHardening:
 
         assert result is None, "a refused probe must never upgrade the outcome"
         assert launched == [], f"no browser may start on a markerless profile; got {launched}"
+
+
+class TestInternalBrowserProbe:
+    """The `--browser internal` poll's migrated arm.
+
+    Council D4 found this block at 0% coverage: the latch, the AUTHENTICATED
+    upgrade and the fail-closed except were all untested, on an auth-GRANTING
+    path. These drive `poll_session_until_authenticated` directly.
+
+    Timeouts are deliberately tiny and `asyncio.sleep` is patched out, so a
+    non-authenticating poll spins to its deadline in milliseconds. A poll that
+    never authenticates raises `AuthLoginTimeoutError` — that is the normal end
+    of these scenarios, not a failure.
+    """
+
+    FLOW_JAR = [
+        {"name": "SAPISID", "domain": ".google.com", "value": "x"},
+        {"name": "__Secure-OSID", "domain": ".flow.google.com", "value": "x"},
+    ]
+    LABS_ONLY_JAR = [{"name": "SAPISID", "domain": ".google.com", "value": "x"}]
+
+    @staticmethod
+    def _harness(cookies: list[dict[str, str]]) -> tuple[Any, Any]:
+        ctx = MagicMock()
+        ctx.cookies = AsyncMock(return_value=cookies)
+        page = MagicMock()
+        page.is_closed.return_value = False
+        page.url = "https://labs.google/fx/tools/flow"
+        resp = MagicMock(status=200)
+        resp.text = AsyncMock(return_value=EMPTY_BODY)
+        page.request.get = AsyncMock(return_value=resp)
+        return ctx, page
+
+    @staticmethod
+    def _patches(dom: AsyncMock, flow_host: str = "auto") -> Any:
+        settings = patch("gflow_cli.auth.internal_chromium.get_settings")
+        mock = settings.start()
+        mock.return_value = MagicMock(flow_host=flow_host)
+        return settings
+
+    @pytest.mark.asyncio
+    async def test_a_signed_in_dom_ends_the_poll_with_no_email(self) -> None:
+        """The whole point: labs says no forever, the DOM says yes, login completes."""
+        from gflow_cli.auth.internal_chromium import poll_session_until_authenticated
+
+        ctx, page = self._harness(self.FLOW_JAR)
+        dom = AsyncMock(return_value={"signout_link": 1, "signin_cta": 0})
+        with (
+            patch("gflow_cli.auth.internal_chromium.get_settings") as settings,
+            patch("gflow_cli.auth.internal_chromium.read_migrated_dom", new=dom),
+            patch("gflow_cli.auth.internal_chromium.asyncio.sleep", new=AsyncMock()),
+        ):
+            settings.return_value = MagicMock(flow_host="auto")
+            email = await poll_session_until_authenticated(ctx, page, 5, "internal")
+        dom.assert_awaited_once()
+        # No email on this host — the poll must not invent one, and its absence
+        # must not be read as a failure. Returning normally IS the assertion.
+        assert email is None
+
+    @pytest.mark.asyncio
+    async def test_no_flow_cookie_never_probes(self) -> None:
+        """A labs-only profile must not pay for a browser tab on every poll."""
+        from gflow_cli.auth.internal_chromium import poll_session_until_authenticated
+
+        ctx, page = self._harness(self.LABS_ONLY_JAR)
+        dom = AsyncMock()
+        with (
+            patch("gflow_cli.auth.internal_chromium.get_settings") as settings,
+            patch("gflow_cli.auth.internal_chromium.read_migrated_dom", new=dom),
+            patch("gflow_cli.auth.internal_chromium.asyncio.sleep", new=AsyncMock()),
+            pytest.raises(AuthLoginTimeoutError),
+        ):
+            settings.return_value = MagicMock(flow_host="auto")
+            await poll_session_until_authenticated(ctx, page, 1, "internal")
+        dom.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_probe_exception_is_retried_once_then_latched(self) -> None:
+        """A transient flake must not disable the fallback for the rest of a
+        ~600 s login (#791 would re-open on a fluke), but a persistent failure
+        must not open a tab on every poll either. Budget is two attempts."""
+        from gflow_cli.auth.internal_chromium import poll_session_until_authenticated
+
+        ctx, page = self._harness(self.FLOW_JAR)
+        dom = AsyncMock(side_effect=RuntimeError("flake"))
+        with (
+            patch("gflow_cli.auth.internal_chromium.get_settings") as settings,
+            patch("gflow_cli.auth.internal_chromium.read_migrated_dom", new=dom),
+            patch("gflow_cli.auth.internal_chromium.asyncio.sleep", new=AsyncMock()),
+            pytest.raises(AuthLoginTimeoutError),
+        ):
+            settings.return_value = MagicMock(flow_host="auto")
+            await poll_session_until_authenticated(ctx, page, 1, "internal")
+        assert dom.await_count == 2, (
+            f"expected exactly 2 attempts — retry a flake, then stop — got {dom.await_count}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_an_anonymous_dom_latches_after_one_read(self) -> None:
+        """A completed read is an answer. Asking again cannot change it."""
+        from gflow_cli.auth.internal_chromium import poll_session_until_authenticated
+
+        ctx, page = self._harness(self.FLOW_JAR)
+        dom = AsyncMock(return_value={"signout_link": 0, "signin_cta": 1})
+        with (
+            patch("gflow_cli.auth.internal_chromium.get_settings") as settings,
+            patch("gflow_cli.auth.internal_chromium.read_migrated_dom", new=dom),
+            patch("gflow_cli.auth.internal_chromium.asyncio.sleep", new=AsyncMock()),
+            pytest.raises(AuthLoginTimeoutError),
+        ):
+            settings.return_value = MagicMock(flow_host="auto")
+            await poll_session_until_authenticated(ctx, page, 1, "internal")
+        assert dom.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_the_kill_switch_stops_the_internal_probe_too(self) -> None:
+        from gflow_cli.auth.internal_chromium import poll_session_until_authenticated
+
+        ctx, page = self._harness(self.FLOW_JAR)
+        dom = AsyncMock()
+        with (
+            patch("gflow_cli.auth.internal_chromium.get_settings") as settings,
+            patch("gflow_cli.auth.internal_chromium.read_migrated_dom", new=dom),
+            patch("gflow_cli.auth.internal_chromium.asyncio.sleep", new=AsyncMock()),
+            pytest.raises(AuthLoginTimeoutError),
+        ):
+            settings.return_value = MagicMock(flow_host="labs.google")
+            await poll_session_until_authenticated(ctx, page, 1, "internal")
+        dom.assert_not_awaited()

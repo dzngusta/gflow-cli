@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **An MCP agent's `project_name` is finally used.** `gflow_generate_image` and
+  `gflow_generate_video` accept a `project_name` and document it as the title for a freshly
+  created Flow project, but the worker read a different key (`project_title`) that nothing in
+  the repository has ever written. Every supplied name was silently dropped and each new
+  project was created as the hardcoded fallback `gflow-cli images` instead. Dead since the
+  parameter shipped on 2026-07-26 — the daemon's read predated it by four days, and the
+  feature wired up a new key rather than the one already being read. The CLI was unaffected.
+
+### Added
+
+- **A gate for the MCP→worker payload-key round trip (#628).** `tests/mcp/test_cli_parity.py`
+  checks parity at the command and option level; neither can see the queue payload, where a
+  key written under one name and read under another type-checks, lints, passes every test and
+  does nothing at runtime. The new `tests/mcp/test_payload_key_round_trip.py` extracts the keys
+  `mcp/tools.py` writes and the keys anything under `worker/` reads, and fails on any written
+  key the worker never reads. It found the `project_name` defect above on its first run. The
+  extractors carry their own tests against synthetic sources, so the gate is proven able to go
+  red rather than merely observed green (precedent: a dead `output` param the queue never read,
+  found by hand in a v0.48.0 pre-release audit, #495).
+
 ## [0.75.0] — 2026-09-15
 
 ### Added

@@ -186,6 +186,40 @@ async def test_worker_process_t2i_batch(temp_db: DataStore) -> None:
 
 
 @pytest.mark.asyncio
+async def test_an_agent_supplied_project_name_becomes_the_created_project_title(
+    temp_db: DataStore,
+) -> None:
+    """#628: the daemon must read the key the MCP tool actually writes.
+
+    ``mcp/tools.py`` writes ``payload["project_name"]`` and documents the parameter
+    as "human-readable project title to use when creating a fresh Flow project".
+    The daemon read ``payload["project_title"]`` — a key nothing in the codebase has
+    ever written — so the name was dropped on every call and each fresh project was
+    created as the hardcoded fallback instead.
+    """
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-project-name",
+        profile_name="default",
+        task_type="t2i",
+        payload={"prompt": "a lighthouse", "count": 2, "project_name": "Client pitch deck"},
+    )
+
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.create_project.return_value = MagicMock(
+        project_id="project-abc", title="Client pitch deck"
+    )
+    fake_client.generate_images_batch.return_value = [FakeGeneratedImage(media_name="media-1")]
+
+    with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
+        await worker.process_task(task)
+
+    fake_client.create_project.assert_awaited_once_with(title="Client pitch deck")
+    worker.close()
+
+
+@pytest.mark.asyncio
 async def test_worker_process_t2v(temp_db: DataStore) -> None:
     repo = QueueRepository(temp_db)
     task = repo.enqueue_task(

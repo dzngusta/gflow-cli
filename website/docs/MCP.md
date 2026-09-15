@@ -280,7 +280,7 @@ Use this if you cloned the repository locally and run it via `uv`:
       "command": "uv",
       "args": [
         "--directory",
-        "C:/development/github/gflow-cli",
+        "/path/to/gflow-cli",
         "run",
         "gflow",
         "mcp",
@@ -302,7 +302,7 @@ Use this if you cloned the repository locally and run it via `uv`:
    * **Local Clone (Development):**
      * **Name:** `gflow-cli`
      * **Type:** `command`
-     * **Command:** `uv --directory C:/development/github/gflow-cli run gflow mcp run`
+     * **Command:** `uv --directory /path/to/gflow-cli run gflow mcp run`
 
 ### HTTP Daemon Setup (`gflow serve`)
 For decoupled clients, local web interfaces, or multi-process frontends, run the daemon as an HTTP service:

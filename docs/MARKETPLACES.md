@@ -75,7 +75,7 @@ payload is generated, never hand-edited — see [`plugins/README.md`](../plugins
 
 ### Codex plugin
 
-```powershell
+```bash
 codex plugin marketplace add .
 codex plugin add gflow@gflow-cli
 ```

@@ -1205,7 +1205,7 @@ your prompts.
 
 ### `gflow-cli[chain]` ≤ 0.74.0 does not install Pillow — `video chain` fails with exit 1
 
-- **Status:** Open on `gflow-cli` ≤ 0.74.0 · **Severity:** High (the command is unusable) · **Affects:** `gflow video chain` · **Tracked:** [#813](https://github.com/ffroliva/gflow-cli/issues/813)
+- **Status:** **Fixed in v0.75.0** · affects `gflow-cli` ≤ 0.74.0 · **Severity:** High (the command was unusable) · **Affects:** `gflow video chain` · **Tracked:** [#813](https://github.com/ffroliva/gflow-cli/issues/813)
 
 Through 0.74.0 the `chain` extra declared `av` alone, but `gflow_cli/media.py`
 imports `PIL` at module level. So the documented install produced a CLI that
@@ -1227,11 +1227,15 @@ pip install 'gflow-cli[chain]' pillow
 # or:  uv tool install 'gflow-cli[chain]' --with pillow
 ```
 
-**Fixed in the next release:** `pillow` ships in the `chain` extra, `av` moved to
+**Fixed in v0.75.0:** `pillow` ships in the `chain` extra, `av` moved to
 a module-level import so both fail at the same point, and `video chain` now
 raises `FrameExtractionError` (**exit 20**) naming the extra and both packages —
 before the manifest is read, before `--dry-run` prints a plan, and before the
-cost prompt.
+cost prompt. Verified against a real wheel installed without extras: a
+**nonexistent** manifest still exits 20 on the dependency error rather than
+file-not-found, which is what shows the guard precedes the manifest read.
+The advice is also legible now — Rich used to eat `[chain]` out of it and print
+`pip install 'gflow-cli'`, i.e. reinstall what you already have.
 
 ---
 

@@ -4,6 +4,52 @@
 
 ## Current release
 
+**v0.75.0 — alpha.** **gflow becomes something you install rather than something you clone —
+and `gflow serve` starts checking the token it always asked you to set.**
+
+**One command installs it into Claude Code.** `/plugin marketplace add ffroliva/gflow-cli` then
+`/plugin install gflow@gflow-cli` registers the MCP server and two curated skills. The plugin
+ships **disabled**, deliberately: Claude Code starts a plugin's MCP servers on enable with no
+prompt of its own, and this one drives your Google account where video generation bills your
+credits, so enabling it is a deliberate act. The same curated payload backs the Codex and
+ChatGPT-desktop manifests, generated from `skills/` with a `--check` drift gate — all three
+previously shipped every maintainer workflow in the repo, `release` and `pr-council-review`
+included, as if they were things a user would install.
+
+**`gflow serve` now verifies the daemon token on every HTTP request.** It previously gated
+startup only: the tool refused a non-loopback bind without a token, and then never checked that
+token on any request, so anything that could reach the port had full access to every tool with or
+without it. Verification is constant-time, outermost, and applies to both the Streamable HTTP and
+the deprecated SSE transport; a missing, malformed or wrong token gets **401** with a
+`WWW-Authenticate: Bearer` header and never reaches a tool. Set a token and upgrade if you run
+`gflow serve` anywhere but the default loopback bind.
+
+**`gflow video chain` stops failing after you have already paid.** `gflow-cli[chain]` installed
+PyAV but not Pillow, while `media.py` imports `PIL` at module level — so the documented extra died
+on `No module named 'PIL'` as a generic exit `1` *"Unexpected error… file a bug"* (#813). Worse,
+a missing `av` used to surface only *between* links, once link 0 had been generated and billed.
+Both packages now ship in the extra, and the import is guarded at the top of the command: either
+one missing is a typed `FrameExtractionError` (exit `20`) raised before the manifest is read,
+before `--dry-run` prints a plan and before the cost prompt.
+
+**And the advice printed with those errors is legible again.** Rich read `[chain]` in an
+interpolated value as a style tag and dropped it, turning every `pip install 'gflow-cli[chain]'`
+hint into `pip install 'gflow-cli'` — advice to reinstall what you already have. Every site
+rendering error text through Rich now escapes it, and a test fails the build if a new one appears.
+
+**Packaging and discovery caught up too:** a `gflow-cli` console script so `uvx gflow-cli mcp run`
+resolves at all, `server.json` for the official MCP Registry, a rewritten PyPI summary that finally
+mentions MCP, and [`DISTRIBUTION.md`](DISTRIBUTION.md) — an operational catalog of every channel
+gflow can be installed or found through, with what each requires and which are closed to us and
+why. The word "unofficial" is gone as a *label*; the substance is unchanged and still prominent.
+
+**Not fixed here:** migrated login (#791), `gflow credits` on migrated accounts (#795), and the
+agent-only composer, which still has no driver.
+
+See [LIVE_VERIFICATION_v0.75.0.md](LIVE_VERIFICATION_v0.75.0.md).
+
+<details><summary>v0.74.0 — the migrated driver stops tripping over its own uploads</summary>
+
 **v0.74.0 — alpha.** **The migrated driver stops tripping over its own uploads — and two
 cohorts it cannot serve are told so plainly instead of being sent in circles.**
 
@@ -50,6 +96,8 @@ balance surface for that cohort has not been located — and gflow still has no 
 the agent-only composer.
 
 See [LIVE_VERIFICATION_v0.74.0.md](LIVE_VERIFICATION_v0.74.0.md).
+
+</details>
 
 <details><summary>v0.73.2 — your bug reports become readable again</summary>
 

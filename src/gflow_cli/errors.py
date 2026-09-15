@@ -834,64 +834,23 @@ class FlowAccountChooserError(GFlowError):
 
 
 class FlowAccessUnavailableError(GFlowError):
-    """Raised when Flow renders its "you don't have access" screen for this account.
+    """Raised when Flow renders its own "you don't have access" screen for this account.
 
-    **Not retryable (exit code 39), and that is the whole point.** The state had no
-    route at all, so every surface guessed from whatever oracle it happened to be
-    holding. Measured 2026-09-15 on a newly created free Google account, with the
-    editor row established by an **A/B**: the probe below neutered, then restored,
-    running the same command against live Flow.
+    **Not retryable, and that is the point.** Before this existed the state had no route,
+    so the editor sweep reported the only thing it could see and told the user Google had
+    changed its frontend — measured as an A/B on 2026-09-15, exit 23 before, 39 after.
+    Not 3 or 8 (nothing expired; a re-login cannot buy a subscription) and not 23
+    (nothing drifted; the app loaded and routed to a component built for this state).
 
-    ==========================  ======  ==========================================
-    surface (oracle)            exit    what it said before this class
-    ==========================  ======  ==========================================
-    the editor (**the DOM**)    23      "Google may have updated their frontend —
-                                        file a bug", plus an incident bundle
-                                        holding a screenshot of the user's page
-    ``create_project`` (REST)   3       "Authentication expired → auth login"
-    ``auth login`` (session)    8       "the Flow app sign-in wasn't completed"
-    ``auth status`` (session)   1       "Signed in to Google, but not to Flow."
-    ``credits user`` (REST)     3       #795, an unrelated real bug
-    ``project list`` (local DB) 0       ``{"projects": [], "total": 0}``
-    ==========================  ======  ==========================================
+    Detected by component, not by URL or status: there is no entitlement field on the
+    wire, ``flow.google.com/`` answers 200 with a client-side hop, and the path varies.
+    The evidence, the four refuted alternatives, and the surfaces this does **not**
+    cover are in ``docs/superpowers/spikes/2026-09-15-unentitled-account-signal.md``.
 
-    **This class fixes the DOM row, and only the DOM row.** Every surface that drives
-    the Flow editor routes through :func:`_common.raise_if_known_landing`, so all of
-    them are covered by the one guard — that is why the fix lives there and not in any
-    one command. The rest are a different question, and deliberately left alone:
-
-    * The REST and session rows read oracles that **cannot** answer it.
-      ``labs.google/fx/api/auth/session`` answers HTTP 200 with an empty ``user`` both
-      for an abandoned sign-in and for an account with no entitlement, and a 401 from
-      ``project.createProject`` is indistinguishable from an expired session.
-      ``evaluate_session_response`` is pure and has nothing to separate them with. The
-      discriminator exists only in the DOM, and by the time
-      ``real_chrome._verify_and_record`` runs its verdict Chrome has already been closed
-      and its cookies read from disk — there is no page left to query. Routing those
-      means launching a browser on the auth path: a separate change, on a surface
-      ``AGENTS.md`` gates behind its own spike.
-    * ``credits user`` exit 3 is #795, a real bug that is not this one.
-    * ``project list`` was never wrong: it lists the local SQLite catalog and does not
-      contact Flow. An empty catalog really is empty.
-
-    The old editor answer was the worst of the set, which is why it is the one fixed
-    here: it blamed gflow's selectors for a missing subscription, cost the user 30 s of
-    waiting, and invited them to open an issue carrying a screenshot of their own
-    account. ``retryable=False`` and a remediation that names a *subscription*, never a
-    re-login, because no number of retries can give an account access it has not bought.
-
-    **Detected by component, not by URL or status.** The spike
-    (``scripts/dev/spike_flow_unavailable_signal.py``) found no entitlement field on
-    the wire, no HTTP 3xx — ``flow.google.com/`` answers 200 and Angular routes
-    client-side — and an unstable path (``/unavailable`` and ``/u/8/unavailable``
-    both observed). What is stable is Flow's own component,
-    ``flow-pinhole-unavailable-screen``, rendered inside ``aisandbox-root``.
-
-    **The message cites Google's page rather than paraphrasing it.** Flow requires
-    age verification, a supported region *and* a Google AI Plus/Pro/Ultra (or
-    qualifying Workspace) plan. Only the plan was measured here, so asserting which
-    requirement failed would be a confident guess — exactly what this class exists
-    to stop.
+    The remediation cites Google's eligibility page rather than paraphrasing it: Flow
+    wants age verification, a supported region *and* a paid plan, and only the missing
+    plan was measured here. Asserting which one failed would be the confident guess this
+    class exists to stop.
     """
 
     problem_type = "https://gflow-cli.dev/errors/flow-access-unavailable"

@@ -122,7 +122,16 @@ still find prose to key on, and would still be wrong.
 ## Verified live, as an A/B
 
 The same command on the same account, on live Flow, with the probe neutered and then
-restored — because "it exits 39 now" alone does not show the fix caused it:
+restored — because "it exits 39 now" alone does not show the fix caused it. The command,
+written out rather than implied:
+
+```
+gflow image t2i "a red cube on a white table" --profile <unentitled>   --project 11111111-2222-3333-4444-555555555555 --json
+# GFLOW_CLI_FLOW_HOST=flow.google.com
+```
+
+The project id is deliberately nonexistent: the account has no projects, and the guard
+fires on the landing before any project lookup, so a real id would have changed nothing.
 
 | arm | exit | class | message |
 |---|---|---|---|

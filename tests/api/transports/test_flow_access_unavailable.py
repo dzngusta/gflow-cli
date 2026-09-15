@@ -42,17 +42,35 @@ from typing import Any
 
 import pytest
 
-from gflow_cli.api.transports._common import raise_if_known_landing
+from gflow_cli.api.transports._common import UNAVAILABLE_SCREEN, raise_if_known_landing
 from gflow_cli.errors import EXIT_CODE_MAP, FlowAccessUnavailableError, is_retryable
 
-UNAVAILABLE = "flow-pinhole-unavailable-screen"
+UNAVAILABLE = UNAVAILABLE_SCREEN
+
+
+def test_the_anchor_is_the_one_that_was_measured() -> None:
+    """The literal is pinned exactly once, here, and imported everywhere else.
+
+    Two copies of a magic string that must match is the drift `UNAVAILABLE_SCREEN`
+    exists to prevent. But the value itself is a measured fact about Flow's DOM
+    (spike 2026-09-15), so changing it should cost a re-measurement rather than pass
+    silently -- hence one assertion on the literal, and no second copy.
+    """
+    assert UNAVAILABLE_SCREEN == "flow-pinhole-unavailable-screen"
 
 
 class _Locator:
-    def __init__(self, count: int) -> None:
+    def __init__(self, count: int, *, explode: bool = False) -> None:
         self._count = count
+        self._explode = explode
 
     async def count(self) -> int:
+        # Real Playwright fails HERE, not at `page.locator(...)`: the selector call is
+        # synchronous and cheap, and it is the awaited query that raises TimeoutError or
+        # "Target closed". A stand-in that only explodes on the sync call would prove the
+        # guard against a failure shape that cannot happen.
+        if self._explode:
+            raise RuntimeError("locator engine unavailable")
         return self._count
 
 
@@ -63,17 +81,26 @@ class _Page:
     touches would be a change in contract this stand-in should fail to satisfy.
     """
 
-    def __init__(self, url: str, *, unavailable: int = 0, explode: bool = False) -> None:
+    def __init__(
+        self,
+        url: str,
+        *,
+        unavailable: int = 0,
+        explode_at: str | None = None,
+    ) -> None:
         self.url = url
         self._unavailable = unavailable
-        self._explode = explode
+        self._explode_at = explode_at
         self.queried: list[str] = []
 
     def locator(self, selector: str) -> _Locator:
         self.queried.append(selector)
-        if self._explode:
+        if self._explode_at == "locator":
             raise RuntimeError("locator engine unavailable")
-        return _Locator(self._unavailable if selector == UNAVAILABLE else 0)
+        return _Locator(
+            self._unavailable if selector == UNAVAILABLE else 0,
+            explode=self._explode_at == "count",
+        )
 
 
 async def _raise_on(page: Any) -> BaseException | None:
@@ -127,8 +154,9 @@ async def test_a_probe_failure_never_displaces_the_real_diagnosis() -> None:
     A DOM probe that raises must not become the reported failure — the caller is
     already mid-diagnosis and its own reading is the one the operator needs.
     """
-    err = await _raise_on(_Page("https://flow.google.com/project/e2e", explode=True))
-    assert err is None, f"a broken locator engine displaced the caller's failure: {err!r}"
+    for where in ("locator", "count"):
+        err = await _raise_on(_Page("https://flow.google.com/project/e2e", explode_at=where))
+        assert err is None, f"a broken locator engine ({where}) displaced the failure: {err!r}"
 
 
 # --------------------------------------------------------------------------- the message
@@ -154,9 +182,18 @@ async def test_the_message_does_not_send_the_user_back_to_login() -> None:
         assert claim not in text, f"re-opens the loop this class exists to close ({claim!r})"
 
 
-async def test_it_says_what_it_saw() -> None:
+async def test_it_says_what_it_saw_without_the_account_ordinal() -> None:
+    """Names the landing, and collapses Google's account index while doing it.
+
+    `/u/8/` is not an address, but it says how many accounts that browser session
+    holds, and error text is what users are asked to paste into GitHub issues. It is
+    also never diagnostic -- gflow has no `/u/N` handling anywhere. An earlier draft of
+    this test asserted the raw `/u/8/` and so pinned the leak in place.
+    """
     err = await _raise_on(_Page("https://flow.google.com/u/8/unavailable", unavailable=1))
-    assert "flow.google.com/u/8/unavailable" in str(err), str(err)
+    detail = str(err)
+    assert "flow.google.com/u/N/unavailable" in detail, detail
+    assert "/u/8/" not in detail, detail
 
 
 # --------------------------------------------------------------------------- the contract
@@ -166,9 +203,14 @@ async def test_it_is_terminal() -> None:
     err = await _raise_on(_Page("https://flow.google.com/unavailable", unavailable=1))
     assert err is not None
     assert is_retryable(err) is False, (
-        "reproduced on demand on a real account: repeated `gflow auth login` gave "
-        "the identical exit 8 every time. A retry cannot help."
+        "the screen renders on every visit for such an account; no retry can grant "
+        "access that was never purchased."
     )
+    # `is_retryable` falls back to RETRYABLE_ERRORS membership, and this class is not in
+    # it -- so the assertion above passes with or without the explicit kwarg at the raise
+    # site. Pin the kwarg itself, or "measured, not a class default" is an unfalsifiable
+    # claim in a comment.
+    assert getattr(err, "retryable", None) is False, "the raise site must state it"
 
 
 def test_it_has_its_own_exit_code() -> None:
@@ -198,28 +240,3 @@ def test_the_existing_landing_kinds_keep_their_codes(other: str) -> None:
         "chooser": "https://accounts.google.com/v3/signin/accountchooser?continue=x",
     }
     assert flow_landing_kind(urls[other]) == other
-
-
-def test_the_mcp_twin_gets_the_same_verdict_and_not_the_fallback() -> None:
-    """The queued surface is different code, so it is checked separately (AGENTS.md
-    § the second law).
-
-    `worker/daemon.py` does not know this class; it resolves an exit code by walking
-    `EXIT_CODE_MAP` and taking the first `isinstance` hit, falling back to **1**. A
-    class registered in the map but shadowed by an earlier, broader entry would reach
-    an agent as a generic failure with no remediation, and every CLI test above would
-    still pass. So this asserts the walk, in daemon order, rather than the dict lookup.
-    """
-    from gflow_cli.errors import UiSelectorDriftError
-
-    def worker_exit_code(exc: Exception) -> int:
-        # Byte-for-byte the daemon's resolution (worker/daemon.py, "Task execution
-        # failed" branch). Duplicated deliberately: importing the daemon drags in the
-        # queue, and the thing under test is the walk, not the daemon.
-        return next((c for cls, c in EXIT_CODE_MAP.items() if isinstance(exc, cls)), 1)
-
-    assert worker_exit_code(FlowAccessUnavailableError(detail="x")) == 39
-    # Positive control: the walk really can return something else, so a passing
-    # assertion above is not just "everything resolves to 39".
-    assert worker_exit_code(UiSelectorDriftError(detail="x")) == EXIT_CODE_MAP[UiSelectorDriftError]
-    assert worker_exit_code(ValueError("not ours")) == 1

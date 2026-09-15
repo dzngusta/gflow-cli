@@ -46,6 +46,7 @@ PROJECT_URL = f"https://flow.google.com/project/{PROJECT_ID}"
 ABOUT_URL = "https://flow.google.com/about"
 LABS_GALLERY = "https://labs.google/fx/tools/flow?hl=en"
 LABS_SIGNIN = "https://labs.google/fx/api/auth/signin?error=Callback"
+LABS_PROJECT = "https://labs.google/fx/tools/flow/project/" + PROJECT_ID
 UNAVAILABLE_URL = "https://flow.google.com/unavailable"
 
 # The measured shape, 2026-09-15, from a real account with no Flow entitlement
@@ -131,6 +132,11 @@ def _gallery_url(world: dict[str, Any]) -> None:
     world["start"] = LABS_GALLERY
 
 
+@given("a project URL on the labs host")
+def _labs_project_url(world: dict[str, Any]) -> None:
+    world["start"] = LABS_PROJECT
+
+
 # ---------------------------------------------------------------------------- when
 
 
@@ -194,6 +200,25 @@ def _unavailable_screen(world: dict[str, Any]) -> None:
             world["pages"],
             world["start"],
             lambda page: MigratedComposer().ensure_editor(page, PROJECT_ID, timeout_s=2.0),
+        )
+    )
+
+
+@when("Flow answers the labs editor with the unavailable screen")
+def _labs_unavailable(world: dict[str, Any]) -> None:
+    """The labs arm, which `_enter_editor`'s guard cannot reach.
+
+    With a project id, `_enter_editor` navigates and returns with no readiness gate, so
+    the first place that can ask "can this account reach Flow at all?" is the mode
+    switch. Driving `_switch_to_image_mode` directly is what makes this a test of the
+    guard rather than of the navigation above it.
+    """
+    world["pages"] = {LABS_PROJECT: _UNAVAILABLE_HTML}
+    world["error"] = asyncio.run(
+        _drive(
+            world["pages"],
+            world["start"],
+            lambda page: UiAutomationTransport._switch_to_image_mode(page),  # noqa: SLF001
         )
     )
 

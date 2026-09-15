@@ -138,7 +138,9 @@ async def main() -> int:
                 hits = _hits(body)
                 if hits:
                     entry["keyword_hits"] = hits
-                    entry["body_snippet"] = redact_sensitive_text(body[:600])
+                    # Redact THEN truncate. The other order slices a Bearer token in half at
+                    # byte 600, the pattern stops matching, and the fragment lands on disk.
+                    entry["body_snippet"] = redact_sensitive_text(body)[:600]
             findings["responses"].append(entry)
 
         page.on("response", on_response)
@@ -149,7 +151,11 @@ async def main() -> int:
             r: Any = resp
             while r is not None:
                 chain.append({"url": str(r.url).split("?")[0], "status": r.status})
-                r = r.request.redirected_from.response() if r.request.redirected_from else None
+                # `Request.response()` is async. Un-awaited, `r` became a coroutine and
+                # the next `r.url` raised -- latent because this capture had no 3xx at all,
+                # so R3's refutation rests on `resp.status == 200`, never on this walk.
+                prev = r.request.redirected_from
+                r = await prev.response() if prev is not None else None
             findings["redirect_chain"] = list(reversed(chain))
 
         # Flow's hop is client-side, so the URL right after goto is read too early.

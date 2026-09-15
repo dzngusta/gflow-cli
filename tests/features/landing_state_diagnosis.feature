@@ -49,3 +49,17 @@ Feature: A known landing state is named, never reported as selector drift
     And the failure is not reported as selector drift
     And the failure does not tell the user to sign in again
     And the failure is terminal, not retryable
+
+  # The labs arm of the same defect, found by the 2026-09-15 council rather than by a
+  # test. `_enter_editor` returns early when a project id is supplied -- no readiness
+  # gate -- so the guard in its gallery arm never runs, and the failure surfaces from
+  # `_switch_to_image_mode` instead. Offline because it cannot be run live here: every
+  # profile we hold is served flow.google.com, so the labs arm is unreachable (a named
+  # blocker, not an untested claim).
+  @e2e @e2e_auth
+  Scenario: the labs editor is answered with the unavailable screen
+    Given a project URL on the labs host
+    When Flow answers the labs editor with the unavailable screen
+    Then the failure says this account cannot reach Flow
+    And the failure is not reported as selector drift
+    And the failure is terminal, not retryable

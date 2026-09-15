@@ -326,9 +326,16 @@ Then check current session state:
 
 ```bash
 gflow auth status
-# A dead session exits 1 and says so, e.g.:
+# Exits 1 and says, e.g.:
 #   "Signed in to Google, but not to the Flow app." + a gflow auth login hint.
 ```
+
+That message has **two** causes and `auth status` cannot tell them apart: the Flow
+sign-in really was not completed, **or** this Google account has no Flow access at all.
+The session endpoint answers HTTP 200 with an empty user for both. Open
+<https://flow.google.com> in a browser on that account before re-running login — if it
+lands on `/unavailable`, no number of logins will help, and a generation command will
+say so directly with **exit 39** (see [USAGE § Exit codes](USAGE.md#exit-codes)).
 
 ### 7.2 Refresh
 

@@ -57,6 +57,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a different real bug. `gflow project list` returning `{"projects": [], "total": 0}` was
   never wrong — it lists the local SQLite catalog and never contacts Flow.)
 
+- **An MCP agent's `project_name` is finally used.** `gflow_generate_image` and
+  `gflow_generate_video` accept a `project_name` and document it as the title for a freshly
+  created Flow project, but the worker read a different key (`project_title`) that nothing in
+  the repository has ever written. Every supplied name was silently dropped and each new
+  project was created as the hardcoded fallback `gflow-cli images` instead. Dead since the
+  parameter shipped on 2026-07-26 — the daemon's read predated it by four days, and the
+  feature wired up a new key rather than the one already being read. The CLI was unaffected.
+
 ### Added
 
 - **A gate for the MCP→worker payload-key round trip (#628).** `tests/mcp/test_cli_parity.py`

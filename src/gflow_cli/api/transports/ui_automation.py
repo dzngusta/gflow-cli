@@ -1689,6 +1689,14 @@ class UiAutomationTransport(VideoGenerationMixin):
             MODE_SWITCH_TRIGGER_SELECTORS,
         )
         if trigger is None:
+            # Reached on the labs arm when --project was supplied: `_enter_editor` returns
+            # early there with no readiness gate, so the guard in its gallery arm never
+            # ran. Consulted here, where the caller is already about to raise, and BEFORE
+            # `_mode_switch_error` classifies -- that helper would otherwise answer
+            # "migrated host" or "selector drift" for an account that simply has no Flow.
+            await raise_if_known_landing(
+                page, requested="the Flow editor", at="labs.switch_to_image_mode"
+            )
             raise await VideoGenerationMixin._mode_switch_error(page, out_dir, media="image")
         await trigger.click()
         await page.wait_for_timeout(_jitter_ms(800))

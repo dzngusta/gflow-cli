@@ -42,8 +42,7 @@ headless UA marker?    : False
 docker compose build
 
 # 2. Sign in ONCE, into the volume. This is the only step a headless box cannot do —
-#    it needs a real display.
-#    Linux:  xhost +local: && docker compose run --rm login
+#    it needs a real display. See "Where the display comes from" below for Windows.
 xhost +local: && docker compose run --rm login
 
 # 3. Everything else runs headed under Xvfb against that volume
@@ -54,6 +53,33 @@ docker compose run --rm gflow gflow credits user   # read-only, $0
 export GFLOW_CLI_DAEMON_TOKEN=$(openssl rand -hex 32)
 docker compose up serve
 ```
+
+## Where the display comes from
+
+Step 2 is the only step that needs a screen you can see, and the socket is not in the
+same place on every host. The `login` service mounts `${X11_SOCKET:-/tmp/.X11-unix}`,
+so the default suits Linux and everything else sets one variable.
+
+| Host | Command |
+|---|---|
+| Linux | `xhost +local: && docker compose run --rm login` |
+| Windows (WSL2 + WSLg) | run **from inside WSL**: `X11_SOCKET=/mnt/wslg/.X11-unix docker compose run --rm login` |
+| macOS | needs XQuartz; not verified here |
+
+**Why Windows needs the override.** Measured on Windows 11 + WSL2 (Ubuntu), 2026-09-15:
+WSLg publishes a live `X0` socket at `/mnt/wslg/.X11-unix`, and `DISPLAY` is already `:0`.
+But `/tmp/.X11-unix` **inside that same distro is an empty directory** — so the Linux
+default mounts nothing useful and Chrome exits immediately against a display that is not
+there. The variable is the difference between working and a confusing failure.
+
+Two things to check before blaming the compose file:
+
+- Run it **from inside WSL**, not Git Bash or PowerShell. On the Windows side
+  `/tmp/.X11-unix` does not exist at all, and Git Bash will additionally rewrite the path
+  (`/mnt/wslg/...` becomes `C:/Program Files/Git/mnt/wslg/...`).
+- Docker's **WSL integration must be on** for that distro — Docker Desktop → Settings →
+  Resources → WSL Integration. Without it the `docker` CLI inside WSL cannot reach the
+  daemon at all: `Cannot connect to the Docker daemon at unix:///var/run/docker.sock`.
 
 ## `serve` refuses to start without a token — on purpose
 

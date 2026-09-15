@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The containerised sign-in now works on Windows, and no longer points at a service that
+  does not exist.** `docker/docker-compose.yml` hard-coded the X11 socket at
+  `/tmp/.X11-unix` and told non-Linux users to "use the VNC service below instead" — there
+  is no VNC service; the file defines `login`, `gflow` and `serve`. On Windows 11 + WSL2 the
+  display is real but lives elsewhere: WSLg publishes a live `X0` socket at
+  `/mnt/wslg/.X11-unix` with `DISPLAY=:0`, while `/tmp/.X11-unix` inside that distro is an
+  empty directory, so the default mounted nothing and Chrome exited against a display that
+  was not there. The mount is now `${X11_SOCKET:-/tmp/.X11-unix}`, unchanged for Linux, and
+  `docker/README.md` documents the WSL invocation plus the two prerequisites that actually
+  bite (run it from inside WSL, and enable Docker's WSL integration for that distro).
 - **An MCP agent's `project_name` is finally used.** `gflow_generate_image` and
   `gflow_generate_video` accept a `project_name` and document it as the title for a freshly
   created Flow project, but the worker read a different key (`project_title`) that nothing in

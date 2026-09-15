@@ -62,7 +62,7 @@ thing, and it is not a distribution task.
    ownership once the `mcp-name:` token is in the *published* README. The moment the wheel is live:
 
    ```
-   mcp-publisher init && mcp-publisher login github && mcp-publisher publish
+   mcp-publisher validate && mcp-publisher login github && mcp-publisher publish
    ```
 2. **Check Glama after the next release.** The Dockerfile is built and 0.75.0 is released, which
    met punkpeye's Glama gate. Auto-Release is meant to publish each GitHub release by itself, but
@@ -131,10 +131,16 @@ just installed.
 Publish sequence (needs the next release on PyPI first, so the token is in the published README):
 
 ```
-mcp-publisher init
+mcp-publisher validate         # NOT `init` - see below
 mcp-publisher login github     # namespace becomes io.github.ffroliva/*
 mcp-publisher publish
 ```
+
+`init` only writes a *template* `server.json`. This repo already has a real one, committed and
+version-locked by `tests/test_server_json.py`, so `init` refuses it with `Error: server.json
+already exists` **and exits 1** - which would abort the one-liner above at its first command.
+`validate` is the right first step: it checks the existing file against the live registry and
+leaves it untouched. Measured with `mcp-publisher 1.8.1` on 2026-09-15.
 
 ### Glama — `listed` 2026-09-14, `released` 2026-09-15
 

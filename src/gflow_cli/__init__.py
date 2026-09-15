@@ -1,3 +1,3 @@
-"""gflow-cli — unofficial CLI for Google Flow."""
+"""gflow-cli — CLI and MCP server for Google Flow."""
 
-__version__ = "0.74.0"
+__version__ = "0.75.0"

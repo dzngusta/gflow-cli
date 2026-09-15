@@ -801,7 +801,7 @@ wheels = [
 
 [[package]]
 name = "gflow-cli"
-version = "0.74.0"
+version = "0.75.0"
 source = { editable = "." }
 dependencies = [
     { name = "browser-cookie3" },
@@ -822,6 +822,7 @@ dependencies = [
 [package.optional-dependencies]
 chain = [
     { name = "av" },
+    { name = "pillow" },
 ]
 dev = [
     { name = "av" },
@@ -888,6 +889,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=2.0.0,<3" },
     { name = "numpy", marker = "extra == 'dev'", specifier = ">=1.24" },
     { name = "patchright", marker = "extra == 'patchright'", specifier = "==1.61.2" },
+    { name = "pillow", marker = "extra == 'chain'", specifier = ">=12.3.0" },
     { name = "platformdirs", specifier = ">=4.0.0" },
     { name = "playwright", specifier = ">=1.61.0,<1.62.0" },
     { name = "pydantic-settings", specifier = ">=2.5.0" },

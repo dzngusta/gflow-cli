@@ -176,6 +176,42 @@ traceback go to the server-side structured log (`mcp.tool.unexpected_error`).
 
 ## 4. Setup Instructions
 
+### Claude Code — the plugin (one step)
+
+```
+/plugin marketplace add ffroliva/gflow-cli
+/plugin install gflow@gflow-cli
+```
+
+This installs the `gflow-cli` and `video-production` skills **and** registers this MCP server,
+so there is nothing further to configure.
+
+> **It ships disabled on purpose.** Claude Code starts a plugin's MCP servers automatically
+> when the plugin is enabled — there is **no separate prompt for the server itself**. This server
+> drives your own signed-in Google account, and Veo video generation bills your credits. So the
+> plugin sets `defaultEnabled: false`: installing it does not start anything, and enabling it is
+> a deliberate act. Images and composition cost nothing; only video spends.
+>
+> The plugin also declares a required `userConfig` acknowledgement, which Claude Code prompts for
+> when you enable it in the UI. Be aware that it is a **prompt, not an enforcement gate** —
+> `claude plugin enable` on the command line succeeds without it. `defaultEnabled: false` is the
+> control that actually holds.
+>
+> **The hard guarantee, if you want one, is `--no-spend`.** It is not a policy the model is asked
+> to respect: the credit-spending tools are never registered, so they do not appear in
+> `tools/list` at all. Register the server yourself with `gflow mcp run --no-spend` (see the
+> manual setup below) instead of using the bundled entry.
+
+The plugin runs `gflow mcp run`, so `gflow` must be on your `PATH` (`uv tool install gflow-cli`)
+and you must have authenticated once with `gflow auth login --browser chrome`.
+
+> **Which revision you get.** `/plugin marketplace add ffroliva/gflow-cli` reads the marketplace
+> from the repository's **default branch**, which in this project is `develop` — the integration
+> branch, not the last release. So the plugin you install tracks `develop`, while the version
+> string in its manifest and the documentation links inside its skills both point at the last
+> released state. If you want a released revision, install from a tag instead of the default
+> branch, or use the manual MCP setup below and a pinned `gflow-cli` from PyPI.
+
 ### Claude Desktop Integration
 Run the configuration helper command in your terminal:
 ```bash
@@ -296,7 +332,24 @@ opposite — a warm daemon holding one live Chromium profile, serialized by
 `ProfileLease`. The *protocol* is stateless either way; that flag only governs
 transport bookkeeping we want to keep.
 
-Non-loopback binds (e.g. `--host 0.0.0.0`) require `GFLOW_DAEMON_TOKEN` to be set.
+### Authentication
+
+Set `GFLOW_DAEMON_TOKEN` (alias `GFLOW_CLI_DAEMON_TOKEN`) and **every** request
+to the daemon must present it:
+
+```http
+Authorization: Bearer <token>
+```
+
+A missing header, a non-`Bearer` scheme, or a wrong token is answered `401` with
+`WWW-Authenticate: Bearer` — on `/mcp` and on both halves of the deprecated SSE
+surface (`/sse`, `/messages/`). The comparison is constant-time
+(`hmac.compare_digest`), and auth is the outermost layer, so an unauthenticated
+caller learns nothing about the transport's DNS-rebinding allow-list.
+
+Non-loopback binds (e.g. `--host 0.0.0.0`) **require** the token — `gflow serve`
+refuses to start without one (exit 11). A loopback bind with no token stays
+unauthenticated, which is the local single-user default.
 
 > **Note:** the background `FlowWorker` queue manager and the REST `/api/v1`
 > surface are built as internal foundation but are **not yet wired into**

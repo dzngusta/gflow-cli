@@ -7,6 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.75.0] — 2026-09-15
+
+### Added
+
+- **Installable as a Claude Code plugin.** `/plugin marketplace add ffroliva/gflow-cli` then
+  `/plugin install gflow@gflow-cli` installs the `gflow-cli` and `video-production` skills and
+  registers the MCP server in one step. The plugin ships **disabled**: Claude Code starts a
+  plugin's MCP servers automatically on enable with no prompt of its own, and this one drives your
+  own Google account where video generation bills your credits, so enabling it is a deliberate act.
+  For a hard guarantee, register the server yourself with `gflow mcp run --no-spend`.
+- **`docs/DISTRIBUTION.md`** — an operational catalog of every channel people install or discover
+  gflow-cli through: audience, how to submit, requirements, status and a last-verified date per
+  row. Every row was checked live. It also records the channels that listed us without being asked
+  (MCP Market, skills.sh with 21 installs, two auto-generated catalogs) and the ones we are not
+  eligible for, with the reason.
+- **Listed on [cursor.directory](https://cursor.directory/plugins/gflow-cli)**, and submitted to
+  seven more channels: Glama, mcpservers.org, and PRs or issues on `punkpeye/awesome-mcp-servers`,
+  `ComposioHQ/awesome-claude-skills`, `hesreallyhim/awesome-claude-code`,
+  `travisvn/awesome-claude-skills` and `Arnon-hs/open-source`. `DISTRIBUTION.md` carries the
+  status and reference for each, and — equally deliberately — why four channels are closed to a
+  local-stdio server that spends the user's own credits, including a section on why there is no
+  hosted "connector" and what one would actually cost.
+- **`server.json`** — metadata for the official MCP Registry, with `tests/test_server_json.py`
+  pinning version lockstep, the schema's 100-character description cap, the name pattern, the
+  `mcp-name:` ownership token in the README, and that the command it advertises really exists.
+- **A `gflow-cli` console script.** `uvx gflow-cli mcp run` previously failed with uv's own
+  *"Use `uvx --from gflow-cli <EXECUTABLE-NAME>` instead"*, because the console scripts were named
+  `gflow` and `flow`. The MCP Registry builds exactly that `uvx <identifier>` command from the
+  PyPI identifier and has no field for a differing executable name, so a listing would have been
+  broken on arrival.
+
+### Changed
+
+- **PyPI metadata.** The summary described only image-to-video and never mentioned MCP; it now
+  says what the package is. Added `Documentation`, `Repository` and `Changelog` sidebar links,
+  ten trove classifiers (all checked against the official list) and MCP-related keywords.
+- **Dropped "unofficial" as a label** from the PyPI summary, `README.md`, `index.html`, the docs
+  site, `llms.txt`, `ROADMAP.md`, `DISCLAIMER.md`, `AGENTS.md`, `CLAUDE.md`,
+  `skills/gflow-cli/SKILL.md` and `src/gflow_cli/__init__.py`. The substance is unchanged and
+  still prominent: the README warning block reads "alpha and reverse-engineered — not affiliated
+  with Google", and `DISCLAIMER.md` still opens "not affiliated with, endorsed by, sponsored by,
+  or otherwise connected to Google LLC" — only the word "unofficial" left its first sentence.
+  It was leading with a negative in the one line PyPI shows in search results.
+
+### Fixed
+
+- **The Codex and ChatGPT-desktop plugin manifests shipped every skill in `skills/`**, including
+  maintainer-only ones (`release`, `check`, `pr-council-review`, `sonar`, `doc-review`). All three
+  channels now point at the same curated two-skill payload under `plugins/gflow/`, generated from
+  `skills/` by `scripts/ci/generate_plugin_skills.py` with a `--check` drift gate in CI.
+
+- **Remediation hints naming an extra rendered without the extra.** Rich reads `[chain]` in an
+  interpolated value as a style tag and silently drops it, so `pip install 'gflow-cli[chain]'`
+  printed as `pip install 'gflow-cli'` — advice that reinstalls what you already have. The same
+  applied to `gflow-cli[patchright]`. Only brackets whose first character is `[a-z#/@]` are
+  affected, which is exactly the shape of a package extra. Every site that renders error text
+  through Rich now escapes it, and `tests/test_rich_markup_safety.py` fails the build if a new one
+  appears. `--json` was never affected.
+
+- **`gflow video chain` was unusable on a clean `gflow-cli[chain]` install (#813).** The extra
+  installed `av` but not Pillow, while `media.py` imports `PIL` at module level — so
+  `uvx --from 'gflow-cli[chain]==0.74.0' gflow video chain one.jsonl --dry-run` died on
+  `No module named 'PIL'`, surfaced as a generic exit `1` *"Unexpected error… file a bug"*,
+  immediately after the user installed the documented extra. `pillow>=12.3.0` now ships in the
+  `chain` extra alongside `av`.
+- **A missing `av` used to fail only AFTER a paid clip.** `import av` sat inside
+  `media._decode_frame`, which runs between links — so the missing extra surfaced once link 0
+  had already been generated and billed. It is now a module-level import beside `PIL`, and the
+  import block at the top of `video chain` is guarded: either missing package is a typed
+  `FrameExtractionError` (exit `20`) raised *before* the manifest is read, before `--dry-run`
+  prints a plan, and before the cost prompt. Nothing is submitted and no browser is launched.
+  `FrameExtractionError`'s remediation now names the extra **and both** packages (`av`,
+  `pillow`); it previously said only "PyAV", which left a missing Pillow undiagnosable.
+- **Error text containing `[...]` was silently truncated on the console.** `detail` and
+  `remediation_hint` were interpolated into Rich markup unescaped, so Rich read `[chain]` as an
+  unknown style tag and dropped it — turning every `install gflow-cli[chain]` hint into
+  `install gflow-cli`, advice that reinstalls what the user already has. Both error render
+  paths now escape. `--json` was never affected.
+### Security
+
+- **`gflow serve` now requires the configured daemon token on every HTTP request.**
+  `GFLOW_CLI_DAEMON_TOKEN` / `GFLOW_DAEMON_TOKEN` previously gated startup only. It is now verified
+  on every request, on both the Streamable HTTP and the deprecated SSE transport, with a
+  constant-time comparison; a missing, malformed or wrong token gets `401` plus a
+  `WWW-Authenticate: Bearer` header and never reaches a tool. Set a token and upgrade if you run
+  `gflow serve` on anything other than the default loopback bind.
+
 ## [0.74.0] — 2026-09-14
 
 ### Added
@@ -5014,7 +5101,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.74.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.75.0...HEAD
+[0.75.0]: https://github.com/ffroliva/gflow-cli/compare/v0.74.0...v0.75.0
 [0.74.0]: https://github.com/ffroliva/gflow-cli/compare/v0.73.2...v0.74.0
 [0.73.2]: https://github.com/ffroliva/gflow-cli/compare/v0.73.1...v0.73.2
 [0.73.1]: https://github.com/ffroliva/gflow-cli/compare/v0.73.0...v0.73.1

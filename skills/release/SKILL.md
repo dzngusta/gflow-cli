@@ -115,8 +115,8 @@ This branch now contains all of `develop` (⊇ `main`) plus your release prep. A
 release prep commits live here; the PR into `main` (step 14) carries the full
 integration history forward.
 
-**6. Bump the shared release version** in `pyproject.toml` and
-`.codex-plugin/plugin.json`:
+**6. Bump the shared release version** in `pyproject.toml`,
+`.codex-plugin/plugin.json` and `plugins/gflow/.claude-plugin/plugin.json`:
 
 ```toml
 [project]
@@ -138,7 +138,7 @@ __version__ = "<NEW_VERSION>"
 **8. Update version assertion tests** if present:
 
 ```bash
-rg -n "__version__|<OLD_VERSION>|version assertion" tests src pyproject.toml .codex-plugin/plugin.json
+rg -n "__version__|<OLD_VERSION>|version assertion" tests src pyproject.toml .codex-plugin/plugin.json plugins/gflow/.claude-plugin/plugin.json
 ```
 
 **9. Migrate CHANGELOG.**

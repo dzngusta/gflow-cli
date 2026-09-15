@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Accounts Google moved to `flow.google.com` can sign in again.** Login verified against one
+  oracle, `labs.google/fx/api/auth/session`. For migrated accounts whose labs session is no
+  longer minted that endpoint answers `200 {}` forever, so verification returned
+  `GOOGLE_SESSION_ONLY` — *"Signed in to Google, but not to the Flow app."* — on an account
+  whose Flow workspace works perfectly in a browser, and gflow then refused every command. A
+  total lockout, not a degraded feature ([#791](https://github.com/ffroliva/gflow-cli/issues/791)).
+  When labs declines *and* the profile carries a `flow.google.com` app-session cookie, gflow now
+  confirms the session against the host that actually serves the app. The cookie only **gates**
+  that check and never decides it: a cookie on disk outlives a password change or a "sign out of
+  all devices", so treating its presence as proof would report a dead session as live.
+  **The check costs a browser because nothing cheaper exists.** Measured with an anonymous
+  control ([spike](docs/superpowers/spikes/2026-09-16-migrated-session-oracle-needs-a-browser.md)):
+  `GET /` and `/tools/flow` both answer `200` with 39- and 47-byte deltas; a `batchexecute` read
+  without an `at` token returns `401` **even carrying a valid session**; `SNlM0e` is gone from the
+  body; and the sign-in link appears in the raw HTML of *both* arms. Only the rendered DOM
+  separates them — `signout_link` 1 vs 0, `signin_cta` 0 vs 1 — because Angular ships one shell
+  to everybody and decides after it boots. The probe therefore runs only when labs declined
+  **and** a flow.google.com cookie exists, so ordinary verification still launches nothing, and
+  `GFLOW_CLI_FLOW_HOST=labs.google` disables it. Its trigger deliberately includes
+  `VERIFICATION_ERROR` as well as `GOOGLE_SESSION_ONLY`, so the fallback still runs on the day
+  labs stops answering at all — the scenario it exists for. A session verified this way reports
+  **no email**: that host discloses none in either arm, so `.gflow_account` is not written and
+  the `assert` that previously required one is gone. Both oracle call sites are covered,
+  including `--browser internal`. The instrument and the regression are pinned by
+  `tests/e2e/test_migrated_session_oracle_bdd.py`; the end-to-end rescue is confirmed by the
+  reporter's cohort, since every account here is migrated with labs still alive.
+
 - **The containerised sign-in now works on Windows, and no longer points at a service that
   does not exist.** `docker/docker-compose.yml` hard-coded the X11 socket at
   `/tmp/.X11-unix` and told non-Linux users to "use the VNC service below instead" — there

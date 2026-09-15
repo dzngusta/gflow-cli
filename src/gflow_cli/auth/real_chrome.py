@@ -461,9 +461,19 @@ class RealChromeStrategy(AuthStrategy):
             )
             # Marker read by browser_manager.channel_for_profile so FlowApiClient
             # selects the system Chrome channel. Load-bearing — must persist here.
-            assert status.user_email, "AUTHENTICATED outcome must carry a non-empty user_email"
-            (profile_dir / ".gflow_account").write_text(status.user_email, encoding="utf-8")
-            _console.print(f"[green][OK] Flow session verified ({status.user_email}).[/green]")
+            #
+            # #791: a session verified against flow.google.com carries no email.
+            # That host discloses none — not in the body, not in the rendered DOM,
+            # in either arm (spike 2026-09-16-migrated-session-oracle-needs-a-browser).
+            # So this asserted on a real, working session. `.gflow_account` is
+            # already optional downstream: profile_store returns None for it and
+            # the account chooser has a no-marker path, so skipping the write is
+            # the honest outcome rather than inventing an address.
+            if status.user_email:
+                (profile_dir / ".gflow_account").write_text(status.user_email, encoding="utf-8")
+                _console.print(f"[green][OK] Flow session verified ({status.user_email}).[/green]")
+            else:
+                _console.print("[green][OK] Flow session verified.[/green]")
         else:
             logger.warning(
                 "auth_flow_session_unverified",

@@ -48,7 +48,7 @@ async def fetch_credits_http(profile_dir: Path) -> CreditsInfo:
     is returned, persisted, or logged.
     """
 
-    session_status, session_body, _ = await fetch_flow_session_httpx(profile_dir)
+    session_status, session_body, _, _ = await fetch_flow_session_httpx(profile_dir)
     if session_status in {401, 403}:
         raise AuthExpiredError(
             detail=f"HTTP {session_status}",

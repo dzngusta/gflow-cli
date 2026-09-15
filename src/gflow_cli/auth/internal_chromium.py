@@ -12,7 +12,15 @@ from gflow_cli.errors import AuthBrowserRejectedError, AuthLoginTimeoutError, Se
 from gflow_cli.profile_lease import ProfileLease
 
 from .base import AuthStrategy
-from .verification import SESSION_API_URL, FlowSessionOutcome, evaluate_session_response
+from .cookies import _has_flow_host_session
+from .verification import (
+    SESSION_API_URL,
+    FlowSessionOutcome,
+    FlowSessionStatus,
+    evaluate_migrated_dom,
+    evaluate_session_response,
+    read_migrated_dom,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -93,6 +101,7 @@ async def poll_session_until_authenticated(
     timeout_at = asyncio.get_running_loop().time() + timeout_seconds
     success = False
     _email: str | None = None
+    migrated_probed = False
 
     while asyncio.get_running_loop().time() < timeout_at:
         try:
@@ -133,7 +142,42 @@ async def poll_session_until_authenticated(
                 await resp.text(),
                 google_session=google_session,
                 source=strategy_name,
+                flow_host_session=_has_flow_host_session(cookies),
             )
+            if (
+                status.migrated_probe_warranted
+                and not migrated_probed
+                and get_settings().flow_host != "labs.google"
+            ):
+                # #791: labs never mints a session for some migrated accounts, so
+                # without this the poll spins to the 600 s deadline on a login
+                # that actually worked. The gate only opens once flow.google.com
+                # cookies exist — i.e. after the user has signed in there — so it
+                # fires near the end of a successful login, not throughout one,
+                # and `_is_safe_to_probe_session` above already keeps us out of
+                # an in-flight callback.
+                #
+                # Once per login: a negative does not become positive by asking
+                # again, and this opens a tab in the window the user is using.
+                migrated_probed = True
+                try:
+                    if evaluate_migrated_dom(await read_migrated_dom(ctx)):
+                        status = FlowSessionStatus(
+                            outcome=FlowSessionOutcome.AUTHENTICATED,
+                            user_email=None,
+                            source=strategy_name,
+                            flow_host_session=True,
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    # Fail-closed: keep the labs outcome and keep polling. Broad
+                    # on purpose — a probe that could not run must not end the
+                    # login, and must not replace an accurate labs outcome with
+                    # a worse one (#795).
+                    logger.warning(
+                        "auth_migrated_probe_error",
+                        strategy=strategy_name,
+                        error=type(exc).__name__,
+                    )
             if status.outcome is FlowSessionOutcome.AUTHENTICATED:
                 logger.info(
                     "auth_flow_session_verified",

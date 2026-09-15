@@ -22,6 +22,13 @@ _FLOW_COOKIE_DOMAIN = "labs.google"
 _FLOW_COOKIE_URL = f"https://{_FLOW_COOKIE_DOMAIN}"
 _GOOGLE_SESSION_COOKIE = "SAPISID"
 
+# The host Google moved the Flow app to, and the app-session cookies it sets
+# there. Scoped to that host on purpose: `OSID` also exists on plain
+# google.com for every signed-in Google user, so matching on the name alone
+# would fire for accounts that have never opened Flow.
+_FLOW_HOST_DOMAIN = "flow.google.com"
+_FLOW_HOST_SESSION_COOKIES = frozenset({"__Secure-OSID", "OSID"})
+
 
 @dataclass(frozen=True)
 class ChromeCookieSnapshot:
@@ -31,10 +38,17 @@ class ChromeCookieSnapshot:
     `google_session` is derived from the full local jar so verification can
     still distinguish "Google signed in, Flow app not signed in" without
     sending broader Google cookies to labs.google.
+
+    `flow_host_session` is likewise derived from the full jar. It is a GATE,
+    never an oracle: it says only that this profile has been signed in to
+    flow.google.com at some point, which is blind to server-side revocation.
+    It exists to decide whether the (browser-backed) migrated probe is worth
+    running at all — see verification.probe_migrated_host_session.
     """
 
     httpx_cookies: dict[str, str]
     google_session: bool
+    flow_host_session: bool = False
 
 
 def _cookie_field(cookie: object, field: str) -> object:
@@ -66,6 +80,23 @@ def _name_value_cookies(cookies: Iterable[object], *, flow_only: bool) -> dict[s
 
 def _has_google_session_cookie(cookies: Iterable[object]) -> bool:
     return any(_cookie_field(cookie, "name") == _GOOGLE_SESSION_COOKIE for cookie in cookies)
+
+
+def _has_flow_host_session(cookies: Iterable[object]) -> bool:
+    """True when the jar carries a flow.google.com app-session cookie.
+
+    Both name AND host must match: `OSID` on `.google.com` is ordinary Google
+    SSO and says nothing about Flow.
+    """
+    for cookie in cookies:
+        name = _cookie_field(cookie, "name")
+        domain = _cookie_field(cookie, "domain")
+        if name not in _FLOW_HOST_SESSION_COOKIES or not isinstance(domain, str):
+            continue
+        normalized = domain.lstrip(".").lower()
+        if normalized == _FLOW_HOST_DOMAIN or normalized.endswith(f".{_FLOW_HOST_DOMAIN}"):
+            return True
+    return False
 
 
 def _get_chrome_cookies3(profile_dir: Path) -> ChromeCookieSnapshot:
@@ -131,6 +162,7 @@ def _get_chrome_cookies3(profile_dir: Path) -> ChromeCookieSnapshot:
     return ChromeCookieSnapshot(
         httpx_cookies=_name_value_cookies(cookies, flow_only=True),
         google_session=_has_google_session_cookie(cookies),
+        flow_host_session=_has_flow_host_session(cookies),
     )
 
 
@@ -180,6 +212,7 @@ async def _get_chrome_cookies_playwright(profile_dir: Path) -> ChromeCookieSnaps
     return ChromeCookieSnapshot(
         httpx_cookies=_name_value_cookies(all_cookies, flow_only=True),
         google_session=_has_google_session_cookie(all_cookies),
+        flow_host_session=_has_flow_host_session(all_cookies),
     )
 
 

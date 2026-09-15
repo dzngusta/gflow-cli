@@ -680,6 +680,45 @@ currently succeed via the e2e transport path.
 
 ---
 
+### Login verification never passed for accounts Google moved to `flow.google.com`
+
+- **Status:** Fixed (pending cohort confirmation) · **Severity:** High — total lockout, not a degraded feature · **Tracked:** [#791](https://github.com/ffroliva/gflow-cli/issues/791)
+
+`gflow auth login` verified a session against exactly one oracle: `labs.google/fx/api/auth/session`.
+For accounts Google migrated to `flow.google.com` **whose labs session is no longer minted**,
+that endpoint answers `200 {}` forever. With a readable `SAPISID` the outcome is
+`GOOGLE_SESSION_ONLY` — *"Signed in to Google, but not to the Flow app."* — on an account whose
+Flow workspace is perfectly usable in a browser. gflow then refuses every command, so the tool
+does not start at all.
+
+**What now happens.** When labs declines *and* the profile carries a `flow.google.com`
+app-session cookie, gflow confirms the session against the host that actually serves the app
+before locking the account out. The cookie only **gates** the check; it never decides one,
+because a cookie on disk survives a password change or a "sign out of all devices" and would
+report a dead session as live.
+
+**Why the check costs a browser.** Nothing cheaper distinguishes a signed-in client from a
+stranger on that host. Measured 2026-09-16
+([spike](docs/superpowers/spikes/2026-09-16-migrated-session-oracle-needs-a-browser.md)):
+`GET /` and `/tools/flow` both answer `200` with a 39- and 47-byte delta; a `batchexecute`
+read without an `at` token is `401` **even carrying a valid session**; and `SNlM0e` is no longer
+in the body to scrape. Only the rendered DOM separates the two arms. The probe therefore runs
+only on the narrow path — labs declined **and** a flow.google.com cookie exists — so an ordinary
+verification still costs nothing. `GFLOW_CLI_FLOW_HOST=labs.google` disables it.
+
+**Two consequences worth knowing.** A session verified this way reports **no email address**:
+that host discloses none, in either arm, so `.gflow_account` is not written and the account
+chooser falls back to its existing no-marker path. And because the trigger includes
+`VERIFICATION_ERROR`, the fallback still runs on the day labs stops answering entirely — which
+is the scenario it exists for.
+
+**Not yet confirmed end to end.** Every account on the maintainer's machine is migrated *with
+labs still alive*, so the rescue path itself — labs dead, probe succeeds, login completes — is
+verified by the reporter's cohort rather than here. The instrument and the regression are
+covered by `tests/e2e/test_migrated_session_oracle_bdd.py`.
+
+---
+
 ### Browser session expires periodically — manual re-login required
 
 - **Status:** Open · **Severity:** Medium · **Affects:** all versions · **Tracked:** N/A (architectural)

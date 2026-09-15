@@ -30,9 +30,15 @@ Feature: A session Google moved to flow.google.com can still be verified
 
   Scenario: A profile with no session renders the anonymous anchors
     # The control. Without it, "signout_link > 0" is a coincidence with formatting.
+    #
+    # The sign-in assertion is what makes this arm falsifiable at all: absence alone
+    # is satisfied by a page that never loaded (0/0), which would pass against a
+    # driver that navigated nowhere. Requiring the ANONYMOUS anchor to be positively
+    # present is the difference between a control and a coincidence.
     Given a fresh profile with no Flow session
     When the driver reads the rendered flow.google.com DOM
     Then the sign-out anchor is absent
+    And the sign-in call to action is present
     And the DOM is not read as an authenticated session
 
   Scenario: The cookie gate opens only for a profile that has used flow.google.com

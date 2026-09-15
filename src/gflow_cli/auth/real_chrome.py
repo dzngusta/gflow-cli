@@ -465,10 +465,15 @@ class RealChromeStrategy(AuthStrategy):
             # #791: a session verified against flow.google.com carries no email.
             # That host discloses none — not in the body, not in the rendered DOM,
             # in either arm (spike 2026-09-16-migrated-session-oracle-needs-a-browser).
-            # So this asserted on a real, working session. `.gflow_account` is
-            # already optional downstream: profile_store returns None for it and
-            # the account chooser has a no-marker path, so skipping the write is
-            # the honest outcome rather than inventing an address.
+            # So this asserted on a real, working session, and inventing an
+            # address to satisfy it would be worse than not writing one.
+            #
+            # The cost is real and is NOT a graceful fallback: with no
+            # `.gflow_account`, `api/client.py`'s account-chooser auto-select
+            # raises FlowAccountChooserError (exit 38) rather than degrading, and
+            # `gflow auth login --account <email>` cannot confirm what it holds.
+            # Both now say why. Tracked as a follow-up; a login that works with a
+            # named limitation beats one that cannot happen at all.
             if status.user_email:
                 (profile_dir / ".gflow_account").write_text(status.user_email, encoding="utf-8")
                 _console.print(f"[green][OK] Flow session verified ({status.user_email}).[/green]")

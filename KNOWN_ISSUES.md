@@ -697,11 +697,17 @@ before locking the account out. The cookie only **gates** the check; it never de
 because a cookie on disk survives a password change or a "sign out of all devices" and would
 report a dead session as live.
 
+That the check is genuinely server-attested was **measured, not assumed**: a copy of a real
+profile with its cookie jar deleted but its `Cache`, `Code Cache` and `Service Worker` left
+intact renders the anonymous page, identically whether service workers are allowed or
+blocked. A warm cache does not mask a dead session.
+
 **Why the check costs a browser.** Nothing cheaper distinguishes a signed-in client from a
 stranger on that host. Measured 2026-09-16
 ([spike](docs/superpowers/spikes/2026-09-16-migrated-session-oracle-needs-a-browser.md)):
-`GET /` and `/tools/flow` both answer `200` with a 39- and 47-byte delta; a `batchexecute`
-read without an `at` token is `401` **even carrying a valid session**; and `SNlM0e` is no longer
+`GET /` and `/tools/flow` both answer `200` with a 27- and 45-byte delta; a `batchexecute`
+read without an `at` token is `401`, byte-identical in both arms, **even carrying a valid
+session**; and `SNlM0e` is no longer
 in the body to scrape. Only the rendered DOM separates the two arms. The probe therefore runs
 only on the narrow path — labs declined **and** a flow.google.com cookie exists — so an ordinary
 verification still costs nothing. `GFLOW_CLI_FLOW_HOST=labs.google` disables it.
@@ -876,6 +882,12 @@ On a profile with no browser-strategy marker that advice is worse than useless, 
 
 Reading a balance on the migrated host is **not** implemented
 ([#795](https://github.com/ffroliva/gflow-cli/issues/795), open). Generation is unaffected.
+
+**This outlives the #791 login fix.** An account rescued by the migrated-host session probe
+signs in and generates normally, and still cannot read a balance here — the two share a root
+condition (labs mints no `access_token`) but only login has a way around it. A green
+`gflow auth status` followed by a red `gflow credits` is the expected shape on that cohort,
+not a regression.
 
 ---
 

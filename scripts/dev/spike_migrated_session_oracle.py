@@ -73,6 +73,27 @@ Q4. (added before the third run, after Q2/Q2b came back "no browserless oracle")
                           have. The oracle concept collapses and #791 needs a
                           different approach entirely — report that loudly.
 
+Q5. (added 2026-09-16 after council D3 on PR #835 found the Q4 control confounded)
+    Q4's anonymous arm used a THROWAWAY profile — no service worker, empty
+    Cache Storage, empty HTTP cache — while its authenticated arm used the warm
+    persistent one. So `signin_cta=1` in that control is equally explained by
+    "the server said anonymous" and by "there was nothing cached to serve". The
+    case that actually matters — warm profile, caches intact, session dead —
+    was never rendered. That is the case a revoked session produces.
+
+    Run with `--warm-control`: copy the real profile, delete ONLY its cookie
+    jar, leave Cache/ and Service Worker/ intact, and render.
+    renders the ANONYMOUS shape (signout 0, signin > 0)
+                       -> the oracle is genuinely server-attested. A dead
+                          session cannot be masked by a warm cache.
+    renders the AUTHENTICATED shape (signout > 0)
+                       -> **STOP.** The probe is reading cache, not the server.
+                          A revoked session would report as live, which is the
+                          single failure this oracle exists to prevent. The fix
+                          does not ship in that form.
+    renders neither    -> unmeasured; the copy did not boot. Say so, do not spin
+                          it as a pass.
+
 Q3. Does any arm carry the account email or a GAIA-shaped id?
     present -> `user_email` can be populated on the migrated arm.
     absent  -> `user_email` must be None, and the assert at
@@ -93,6 +114,7 @@ import asyncio
 import json
 import re
 import sys
+from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any, cast
@@ -242,7 +264,9 @@ def _batchexecute(cookie: str) -> dict[str, Any]:
     }
 
 
-async def _rendered_dom(profile_dir: Path | None) -> dict[str, Any]:
+async def _rendered_dom(
+    profile_dir: Path | None, *, block_service_workers: bool = False
+) -> dict[str, Any]:
     """Rendered-DOM probe on flow.google.com — `profile_dir=None` is the anonymous control.
 
     Tier-1 structural anchors only (AGENTS.md locale-invariance): `href`
@@ -291,6 +315,7 @@ async def _rendered_dom(profile_dir: Path | None) -> dict[str, Any]:
                 channel=channel,
                 headless=True,
                 args=["--password-store=basic"],
+                service_workers="block" if block_service_workers else "allow",
             )
         else:
             import tempfile
@@ -299,6 +324,7 @@ async def _rendered_dom(profile_dir: Path | None) -> dict[str, Any]:
                 user_data_dir=tempfile.mkdtemp(prefix="spike_anon_"),
                 headless=True,
                 args=["--password-store=basic"],
+                service_workers="block" if block_service_workers else "allow",
             )
         try:
             page = await ctx.new_page()
@@ -381,15 +407,82 @@ def _verdict(result: dict[str, Any]) -> dict[str, str]:
     return out
 
 
+async def _warm_control(profile_dir: Path) -> int:
+    """Q5: render a WARM profile whose session is dead.
+
+    Copies the profile, deletes only the cookie jar, and leaves `Cache/` and
+    `Service Worker/` exactly as they are. That is what a revoked session looks
+    like from disk: the caches still hold everything this profile saw while it
+    was signed in.
+
+    Never mutates the real profile — the jar is deleted in the COPY.
+    """
+    import shutil
+
+    dest = profile_dir.parent / f"{profile_dir.name}-warmctl"
+    if dest.exists():
+        shutil.rmtree(dest, ignore_errors=True)
+
+    print(f"[1/3] copying {profile_dir.name} -> {dest.name} (under lease)...")
+    async with ProfileLease(profile_dir):
+        shutil.copytree(profile_dir, dest, dirs_exist_ok=True)
+
+    removed: list[str] = []
+    for jar in dest.rglob("Cookies*"):
+        if jar.is_file():
+            jar.unlink(missing_ok=True)
+            removed.append(jar.name)
+    warm = {d: (dest / "Default" / d).is_dir() for d in ("Cache", "Code Cache", "Service Worker")}
+    print(f"      cookie files removed: {removed}")
+    print(f"      caches left intact:   {warm}")
+    if not any(warm.values()):
+        print("      WARNING: no caches survived the copy — this is NOT a warm control.")
+
+    # Both arms: `block` is what production ships, `allow` shows whether the risk
+    # was ever real. A difference between them is itself the finding.
+    results: dict[str, Mapping[str, int]] = {}
+    for label, block in (("service_workers=block (production)", True), ("allow", False)):
+        print(f"[2/3] rendering warm + session-less, {label}...")
+        results[label] = await _rendered_dom(dest, block_service_workers=block)
+        print(f"      {dict(results[label])}")
+
+    print("[3/3] verdict (pre-registered reading Q5, on the production arm):")
+    prod = results["service_workers=block (production)"]
+    signout, signin = prod.get("signout_link", 0), prod.get("signin_cta", 0)
+    if signout > 0:
+        print("      STOP — AUTHENTICATED shape from a profile with NO cookies.")
+        print("      The probe is reading cache, not the server. Do not ship.")
+        rc = 1
+    elif signin > 0:
+        print("      PASS — anonymous shape. A warm cache does not mask a dead session;")
+        print("      the oracle is server-attested.")
+        rc = 0
+    else:
+        print("      UNMEASURED — neither anchor; the copy did not boot. Settles nothing.")
+        rc = 2
+    shutil.rmtree(dest, ignore_errors=True)
+    print(f"      cleaned up {dest.name}")
+    return rc
+
+
 async def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--profile", default="ffroliva", help="profile name under GFLOW_CLI_HOME")
+    ap.add_argument(
+        "--warm-control",
+        action="store_true",
+        help="Q5 only: render a copy of the profile with its cookie jar deleted but its "
+        "caches intact — the shape a revoked session leaves on disk.",
+    )
     args = ap.parse_args()
 
     profile_dir = get_settings().home / f"profile_{args.profile}"
     if not profile_dir.is_dir():
         print(f"no such profile: {profile_dir}", file=sys.stderr)
         return 2
+
+    if args.warm_control:
+        return await _warm_control(profile_dir)
 
     print(f"[1/3] reading full cookie jar from {profile_dir.name} (under lease)...")
     jar = await _read_full_jar(profile_dir)

@@ -290,12 +290,21 @@ async def fetch_flow_session_httpx(
 # (measured), so only what Angular actually renders can decide. Locale-invariant
 # by construction: these are URLs, not labels.
 _MIGRATED_PROBE_URL = "https://flow.google.com/"
-_MIGRATED_DOM_JS = """() => ({
+# The counting expression, written once. Both the settle-wait and the read are
+# built from it so they can never disagree about what they are counting.
+_MIGRATED_DOM_COUNTS = """({
     signout_link: document.querySelectorAll('a[href*="SignOutOptions"]').length,
     signin_cta: document.querySelectorAll(
         'a[href*="accounts.google.com/ServiceLogin"], a[href*="accounts.google.com/signin"]'
     ).length,
 })"""
+_MIGRATED_DOM_JS = f"() => {_MIGRATED_DOM_COUNTS}"
+_MIGRATED_SETTLE_JS = (
+    f"() => {{ const c = {_MIGRATED_DOM_COUNTS}; return c.signout_link > 0 || c.signin_cta > 0; }}"
+)
+# How long to let Angular boot and route before reading. A timeout is a normal
+# outcome, not an error — it reads as "neither anchor", which fails closed.
+_MIGRATED_SETTLE_MS = 30_000
 
 
 def evaluate_migrated_dom(counts: Mapping[str, int]) -> bool:
@@ -316,8 +325,19 @@ def evaluate_migrated_dom(counts: Mapping[str, int]) -> bool:
 async def read_migrated_dom(ctx: BrowserContext) -> Mapping[str, int]:
     """Count the anchors on flow.google.com in an ALREADY-OPEN context.
 
-    Callers that hold a live browser — `verify_flow_session` and the
-    `--browser internal` poll — use this and pay no extra launch.
+    Callers that hold a live browser use this and pay no extra launch.
+
+    Waits for **either** anchor to appear rather than for `networkidle`. That is
+    the actual settle signal: whichever renders first is the answer, so the wait
+    ends as soon as the question is answered instead of on a whole-page
+    heuristic. `networkidle` is also the wrong tool on this app specifically —
+    `api/transports/ui_automation.py` already carries "Do NOT use
+    wait_until='networkidle' — PWAs re-render incrementally and networkidle is
+    flaky", and a PWA holding one long-poll open would make every probe pay the
+    full timeout on the login path this exists to rescue.
+
+    A timeout here is not an error: it returns whatever is on the page, which
+    reads as "neither anchor" and therefore as not-authenticated. Fail-closed.
     """
     page = await ctx.new_page()
     try:
@@ -326,39 +346,60 @@ async def read_migrated_dom(ctx: BrowserContext) -> Mapping[str, int]:
         # "neither anchor" for a perfectly good session.
         await page.goto(_MIGRATED_PROBE_URL, wait_until="domcontentloaded")
         try:
-            await page.wait_for_load_state("networkidle", timeout=30_000)
-        except Exception:  # noqa: BLE001 — a busy page is still readable
-            await page.wait_for_timeout(5_000)
+            await page.wait_for_function(_MIGRATED_SETTLE_JS, timeout=_MIGRATED_SETTLE_MS)
+        except Exception:  # noqa: BLE001 — an unsettled page still gets read, and fails closed
+            logger.info("auth_migrated_probe_no_anchor_settled", timeout_ms=_MIGRATED_SETTLE_MS)
         return cast("Mapping[str, int]", await page.evaluate(_MIGRATED_DOM_JS))
     finally:
         await page.close()
 
 
-async def _render_migrated_dom(profile_dir: Path, channel: str | None) -> Mapping[str, int]:
+async def _render_migrated_dom(profile_dir: Path) -> Mapping[str, int]:
     """Launch a headless context purely to read the migrated DOM.
 
     Only the httpx fast path needs this — it has no browser of its own. Kept
     separate from `probe_migrated_host_session` so the decision logic stays
     testable without a browser.
-
-    `channel=None` means bundled Chromium; the kwarg is then omitted rather than
-    passed as None.
     """
-    from gflow_cli.browser_manager import ensure_profile_engine_compatible
+    from gflow_cli.browser_manager import channel_for_profile, ensure_profile_engine_compatible
 
     from .strategies import async_playwright
+
+    # Same marker gate every sibling reader applies (`cookies.py`'s Playwright
+    # fallback raises here). Without it, a profile whose marker a failed login
+    # rolled back would be opened by BUNDLED Chromium, which then writes its own
+    # `Last Version` into a real-Chrome profile — the corruption the marker
+    # exists to prevent, on the exact profiles #791 leaves in that state.
+    channel = channel_for_profile(profile_dir)
+    if channel != "chrome":
+        msg = "Chrome-strategy marker missing; refusing to open this profile for the Flow probe."
+        raise SecurityError(msg)
 
     async with ProfileLease(profile_dir):
         ensure_profile_engine_compatible(profile_dir, channel)
         async with async_playwright() as pw:
-            kwargs: dict[str, Any] = {
-                "user_data_dir": str(profile_dir),
-                "headless": True,
-                "args": ["--password-store=basic"],
-            }
-            if channel is not None:
-                kwargs["channel"] = channel
-            ctx = await pw.chromium.launch_persistent_context(**kwargs)
+            ctx = await pw.chromium.launch_persistent_context(
+                user_data_dir=str(profile_dir),
+                channel=channel,
+                headless=True,
+                # A service worker at flow.google.com scope could answer the
+                # probe's navigation from Cache Storage, rendering the shape
+                # this profile saw when it WAS signed in. That would make a
+                # revoked session read as live — the one failure this oracle
+                # exists to prevent. Block them: the probe must see the server.
+                service_workers="block",
+                # This is the first time gflow points a HEADLESS browser at the
+                # live Flow app origin (earlier probes used ctx.request against
+                # labs, never page.goto). G12 keys on `navigator.webdriver`, so
+                # carry the same measured stealth set the login launcher uses —
+                # spike 2026-09-08-g12-blocks-webdriver-not-playwright.
+                chromium_sandbox=True,
+                ignore_default_args=["--enable-automation"],
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--password-store=basic",
+                ],
+            )
             try:
                 return await read_migrated_dom(ctx)
             finally:
@@ -369,7 +410,6 @@ async def probe_migrated_host_session(
     profile_dir: Path,
     *,
     source: str,
-    channel: str | None = None,
 ) -> FlowSessionStatus | None:
     """Confirm a Flow session against flow.google.com, or return None.
 
@@ -390,21 +430,24 @@ async def probe_migrated_host_session(
     anywhere on that host, in either arm — or None, which leaves the caller's
     original outcome untouched. Fail-closed: any failure returns None.
     """
+    # Every sibling public entry guards its own boundary rather than trusting a
+    # caller to have done it. The shipped path validates upstream in
+    # `fetch_flow_session_httpx`, but this is public and must not depend on that.
+    _validate_profile_in_home(profile_dir)
+
     if get_settings().flow_host == "labs.google":
         # Existing kill switch, no new env var. An operator who has pinned labs
         # has said not to touch the migrated host; honour that before launching.
         logger.info("auth_migrated_probe_skipped_labs_pinned", source=source)
         return None
 
-    if channel is None:
-        # The profile's own marker, not a hardcoded "chrome": a bundled-Chromium
-        # profile would otherwise be refused by the engine check rather than probed.
-        from gflow_cli.browser_manager import channel_for_profile
-
-        channel = channel_for_profile(profile_dir)
-
     try:
-        counts = await _render_migrated_dom(profile_dir, channel)
+        # Inside the try on purpose: `_render_migrated_dom` resolves the profile
+        # marker, and `channel_for_profile` does an unguarded `read_text`. An
+        # OSError there would otherwise escape past `verify_flow_profile`'s own
+        # fail-closed handler, which has already returned by the time we run —
+        # turning a clean GOOGLE_SESSION_ONLY into an unhandled crash.
+        counts = await _render_migrated_dom(profile_dir)
     except Exception as exc:  # noqa: BLE001
         # Fail-closed, and name the failure: a probe that cannot run must never
         # upgrade an outcome, but it must also not look like a clean negative.
@@ -529,13 +572,10 @@ async def verify_flow_session(
             source=source,
         )
 
-    result = evaluate_session_response(
-        status_code,
-        body,
-        google_session=google_session,
-        source=source,
-        flow_host_session=flow_host_session,
-    )
+    # `provisional` was computed from these exact arguments inside the context
+    # (it had to be, to decide whether to probe) — same pure function, same
+    # inputs. Recomputing it would be a second identical call.
+    result = provisional
     if result.outcome is FlowSessionOutcome.VERIFICATION_ERROR:
         # Observable durability signal — distinguishes a moved/changed endpoint
         # from a flaky link. The status code is safe to log; the body is not.

@@ -26,6 +26,7 @@ from gflow_cli.auth.verification import (
     probe_migrated_host_session,
     verify_flow_profile,
 )
+from gflow_cli.errors import SecurityError
 
 AUTHENTICATED_BODY = (
     '{"user": {"name": "T", "email": "t@example.com"}, "expires": "2026-06-16T08:39:21.000Z"}'
@@ -130,14 +131,21 @@ class TestEvaluateMigratedDom:
 class TestProbeKillSwitch:
     """`GFLOW_CLI_FLOW_HOST=labs.google` means never touch the migrated host."""
 
+    @staticmethod
+    def _profile(tmp_path: Path) -> Path:
+        # Must live inside the patched home: the probe validates its own boundary.
+        profile = tmp_path / "profile_x"
+        profile.mkdir(exist_ok=True)
+        return profile
+
     @pytest.mark.asyncio
     async def test_labs_only_setting_skips_the_probe_entirely(self, tmp_path: Path) -> None:
         with (
             patch("gflow_cli.auth.verification.get_settings") as settings,
             patch("gflow_cli.auth.verification._render_migrated_dom", new=AsyncMock()) as render,
         ):
-            settings.return_value = MagicMock(flow_host="labs.google")
-            result = await probe_migrated_host_session(tmp_path, source="chrome")
+            settings.return_value = MagicMock(flow_host="labs.google", home=tmp_path)
+            result = await probe_migrated_host_session(self._profile(tmp_path), source="chrome")
         assert result is None
         render.assert_not_awaited()
 
@@ -154,8 +162,8 @@ class TestProbeKillSwitch:
                 new=AsyncMock(return_value={"signout_link": 1, "signin_cta": 0}),
             ),
         ):
-            settings.return_value = MagicMock(flow_host="auto")
-            result = await probe_migrated_host_session(tmp_path, source="chrome")
+            settings.return_value = MagicMock(flow_host="auto", home=tmp_path)
+            result = await probe_migrated_host_session(self._profile(tmp_path), source="chrome")
         assert result is not None
         assert result.outcome is FlowSessionOutcome.AUTHENTICATED
         assert result.user_email is None
@@ -171,8 +179,8 @@ class TestProbeKillSwitch:
                 new=AsyncMock(return_value={"signout_link": 0, "signin_cta": 1}),
             ),
         ):
-            settings.return_value = MagicMock(flow_host="auto")
-            result = await probe_migrated_host_session(tmp_path, source="chrome")
+            settings.return_value = MagicMock(flow_host="auto", home=tmp_path)
+            result = await probe_migrated_host_session(self._profile(tmp_path), source="chrome")
         assert result is None
 
     @pytest.mark.asyncio
@@ -185,8 +193,8 @@ class TestProbeKillSwitch:
                 new=AsyncMock(side_effect=RuntimeError("no chrome")),
             ),
         ):
-            settings.return_value = MagicMock(flow_host="auto")
-            result = await probe_migrated_host_session(tmp_path, source="chrome")
+            settings.return_value = MagicMock(flow_host="auto", home=tmp_path)
+            result = await probe_migrated_host_session(self._profile(tmp_path), source="chrome")
         assert result is None
 
 
@@ -285,3 +293,112 @@ class TestVerifyFlowProfileIntegration:
         assert status.outcome is FlowSessionOutcome.AUTHENTICATED
         assert status.user_email == "t@example.com"
         probe.assert_not_awaited()
+
+
+class TestProbeLaunchHardening:
+    """Security properties of the launch itself — pinned so they cannot drift."""
+
+    @pytest.mark.asyncio
+    async def test_service_workers_are_blocked(self, tmp_path: Path) -> None:
+        """A service worker at flow.google.com scope could answer the probe's
+        navigation from Cache Storage with the shape this profile saw when it WAS
+        signed in — making a revoked session read as live, which is the single
+        failure this oracle exists to prevent.
+
+        Found by council D3 on PR #835: the spike's anonymous arm used a cold
+        throwaway profile while the authenticated arm was warm, so the control
+        could not distinguish "server said anonymous" from "empty cache".
+        """
+        profile = tmp_path / "profile_x"
+        profile.mkdir()
+        launched: dict[str, object] = {}
+
+        class _Ctx:
+            async def close(self) -> None: ...
+
+        class _Chromium:
+            async def launch_persistent_context(self, **kwargs: object) -> _Ctx:
+                launched.update(kwargs)
+                return _Ctx()
+
+        class _PW:
+            chromium = _Chromium()
+
+            async def __aenter__(self) -> _PW:
+                return self
+
+            async def __aexit__(self, *exc: object) -> bool:
+                return False
+
+        with (
+            patch("gflow_cli.auth.verification.get_settings") as settings,
+            patch("gflow_cli.auth.strategies.async_playwright", return_value=_PW()),
+            patch("gflow_cli.browser_manager.channel_for_profile", return_value="chrome"),
+            patch("gflow_cli.browser_manager.ensure_profile_engine_compatible"),
+            patch("gflow_cli.auth.verification.ProfileLease"),
+            patch(
+                "gflow_cli.auth.verification.read_migrated_dom",
+                new=AsyncMock(return_value={"signout_link": 0, "signin_cta": 1}),
+            ),
+        ):
+            settings.return_value = MagicMock(flow_host="auto", home=tmp_path)
+            await probe_migrated_host_session(profile, source="chrome")
+
+        assert launched.get("service_workers") == "block", (
+            f"the probe must block service workers; launch kwargs were {launched}"
+        )
+        assert launched.get("headless") is True
+
+    @pytest.mark.asyncio
+    async def test_a_profile_outside_home_is_refused(self, tmp_path: Path) -> None:
+        """The probe guards its own boundary rather than trusting its caller."""
+        home = tmp_path / "home"
+        home.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        with (
+            patch("gflow_cli.auth.verification.get_settings") as settings,
+            patch("gflow_cli.auth.verification._render_migrated_dom", new=AsyncMock()) as render,
+        ):
+            settings.return_value = MagicMock(flow_host="auto", home=home)
+            with pytest.raises(SecurityError):
+                await probe_migrated_host_session(outside, source="chrome")
+        render.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_markerless_profile_is_refused_rather_than_opened(self, tmp_path: Path) -> None:
+        """A failed first login rolls `.gflow_browser_strategy` back — the exact
+        state #791's reporters are likely in. Without this gate, BUNDLED Chromium
+        would open a real-Chrome profile and write its own `Last Version` into it,
+        which is the corruption the marker exists to prevent. Every sibling reader
+        refuses here; so does the probe. Fail-closed: the caller sees None.
+        """
+        profile = tmp_path / "profile_x"
+        profile.mkdir()
+        launched: list[object] = []
+
+        class _Chromium:
+            async def launch_persistent_context(self, **kwargs: object) -> object:
+                launched.append(kwargs)
+                raise AssertionError("must not launch on a markerless profile")
+
+        class _PW:
+            chromium = _Chromium()
+
+            async def __aenter__(self) -> _PW:
+                return self
+
+            async def __aexit__(self, *exc: object) -> bool:
+                return False
+
+        with (
+            patch("gflow_cli.auth.verification.get_settings") as settings,
+            patch("gflow_cli.auth.strategies.async_playwright", return_value=_PW()),
+            patch("gflow_cli.browser_manager.channel_for_profile", return_value=None),
+            patch("gflow_cli.auth.verification.ProfileLease"),
+        ):
+            settings.return_value = MagicMock(flow_host="auto", home=tmp_path)
+            result = await probe_migrated_host_session(profile, source="chrome")
+
+        assert result is None, "a refused probe must never upgrade the outcome"
+        assert launched == [], f"no browser may start on a markerless profile; got {launched}"

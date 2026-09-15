@@ -841,7 +841,12 @@ class FlowApiClient:
             raise FlowAccountChooserError(
                 detail=(
                     f"Google sign-in/chooser displayed at {safe_page_url(url)} but no "
-                    f"account is recorded in this profile to auto-select."
+                    f"account is recorded in this profile to auto-select. If this profile "
+                    f"was verified against flow.google.com, that is expected: that host "
+                    f"discloses no address, so gflow has none to match a chooser row "
+                    f"against (#791). Sign in to the account manually in the opened "
+                    f"window, or re-run `gflow auth login` on a profile whose session "
+                    f"labs.google still mints."
                 )
             )
 

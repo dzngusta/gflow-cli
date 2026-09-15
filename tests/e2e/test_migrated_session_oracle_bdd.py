@@ -40,7 +40,7 @@ from gflow_cli.auth.verification import (
     read_migrated_dom,
     verify_flow_profile,
 )
-from gflow_cli.browser_manager import channel_for_profile, ensure_profile_engine_compatible
+from gflow_cli.browser_manager import channel_for_profile
 from gflow_cli.profile_lease import ProfileLease
 
 scenarios("../features/migrated_session_oracle.feature")
@@ -62,9 +62,12 @@ async def _read_dom(profile_dir: Path, *, channel: str | None) -> dict[str, int]
             "user_data_dir": str(profile_dir),
             "headless": True,
             "args": ["--password-store=basic"],
+            # Match production: a cached service worker could serve the shape this
+            # profile saw when signed in, which is the one thing the oracle must
+            # never read as live.
+            "service_workers": "block",
         }
         if channel is not None:
-            ensure_profile_engine_compatible(profile_dir, channel)
             kwargs["channel"] = channel
         ctx = await pw.chromium.launch_persistent_context(**kwargs)
         try:
@@ -81,8 +84,10 @@ def _live_profile(world: dict[str, Any], e2e_profile_dir: Path) -> None:
 
 @given("a fresh profile with no Flow session")
 def _fresh_profile(world: dict[str, Any], e2e_nosession_profile: Path) -> None:
-    # No `.gflow_browser_strategy` marker on a fresh dir, so no channel to pin —
-    # bundled Chromium is correct here and the engine check would refuse.
+    # A fresh dir has no `.gflow_browser_strategy` marker, so there is no channel
+    # to pin and bundled Chromium is the right engine. (Production's
+    # `_render_migrated_dom` REFUSES a markerless profile outright; this arm is the
+    # anonymous control, not a production path, so it launches directly.)
     world["profile"] = e2e_nosession_profile
     world["channel"] = None
 
@@ -93,9 +98,12 @@ async def _read_jar_async(profile_dir: Path, channel: str | None) -> bool:
             "user_data_dir": str(profile_dir),
             "headless": True,
             "args": ["--password-store=basic"],
+            # Match production: a cached service worker could serve the shape this
+            # profile saw when signed in, which is the one thing the oracle must
+            # never read as live.
+            "service_workers": "block",
         }
         if channel is not None:
-            ensure_profile_engine_compatible(profile_dir, channel)
             kwargs["channel"] = channel
         ctx = await pw.chromium.launch_persistent_context(**kwargs)
         try:
@@ -155,6 +163,15 @@ def _signout_absent(world: dict[str, Any]) -> None:
         f"a profile with no session must not render a sign-out anchor, got {world['dom']}. "
         "A non-zero count here would mean the anchor is not session-dependent at all, "
         "which would invalidate the oracle."
+    )
+
+
+@then("the sign-in call to action is present")
+def _signin_present(world: dict[str, Any]) -> None:
+    assert world["dom"]["signin_cta"] > 0, (
+        f"the anonymous control must POSITIVELY render a sign-in CTA, got {world['dom']}. "
+        "0/0 would mean the page never loaded — which would make this arm pass against "
+        "a driver that navigated nowhere, and the whole control worthless."
     )
 
 

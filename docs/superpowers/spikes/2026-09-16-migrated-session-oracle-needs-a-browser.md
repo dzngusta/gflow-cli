@@ -23,9 +23,9 @@ Two arms — the real cookie jar vs no cookies at all — against the same four 
 
 | Probe | authenticated | anonymous | separates? |
 |---|---|---|---|
-| `GET flow.google.com/` | 200, 152 719 B | 200, 152 680 B | **no** — 39 B, identical markers, same final URL |
-| `GET flow.google.com/tools/flow` | 200, 152 758 B | 200, 152 711 B | **no** — 47 B, identical markers, same final URL |
-| `POST …/data/batchexecute?rpcids=jwpduf` (no `at`) | **401**, 140 B | **401**, 138 B | **no** |
+| `GET flow.google.com/` | 200, 152 716 B | 200, 152 689 B | **no** — 27 B, identical markers, same final URL |
+| `GET flow.google.com/tools/flow` | 200, 152 757 B | 200, 152 712 B | **no** — 45 B, identical markers, same final URL |
+| `POST …/data/batchexecute?rpcids=jwpduf` (no `at`) | **401**, 137 B | **401**, 137 B | **no** — byte-identical |
 | `GET labs.google/fx/api/auth/session` | 200, 691 B, 1 email | 200, **2 B** (`{}`) | yes — but see below |
 
 Marker sweep on the migrated host, both arms identical: `SNlM0e` **absent**,
@@ -41,6 +41,7 @@ Then the rendered DOM, same page, Tier-1 structural anchors only:
 | `a[href*="accounts.google.com/ServiceLogin\|/signin"]` | **0** | **1** |
 | `[data-gaiaid], [data-authuser]` | 0 | 0 |
 | custom elements (`flow-*`, `aisandbox*`) | 10 | 19 |
+| settled URL | `flow.google.com/` | `flow.google.com/about` |
 
 ## Verdict, against the readings pre-registered before the run
 
@@ -50,9 +51,10 @@ retires the 2026-09-03 finding for good.
 
 **Q2 / Q2b — `NO_BROWSERLESS_ORACLE`.** Every migrated-host probe answered *identically*
 in both arms. The batchexecute read is the sharp one: carrying a **valid session** and no
-`at` token it returns **401**, and so does the anonymous arm, two bytes apart. `at` is
-therefore required for reads, it is no longer obtainable without a browser, and the 401
-reports *the missing token*, not the session state. It cannot be an oracle.
+`at` token it returns **401**, and so does the anonymous arm — **the same status at the same 137
+bytes**. `at` is therefore required for reads, it is no longer obtainable without a
+browser, and the 401 reports *the missing token*, not the session state. It cannot be an
+oracle.
 
 **Q3 — `IDENTITY_ABSENT`.** No email and no GAIA-shaped id anywhere on the migrated host,
 in either arm. `user_email` must be `None` on the migrated arm — exactly as the predict
@@ -76,6 +78,29 @@ HTML of both arms, and in the rendered DOM of only the anonymous one.** Angular 
 shell to everybody and decides after it boots. Any oracle that greps the response body is
 reading the shell, not the session — which is why every browserless instrument above came
 back flat.
+
+**Q5 — `SERVER_ATTESTED_CONFIRMED`.** Added after council D3 on PR #835 pointed out that
+Q4's control was **confounded**: its anonymous arm used a throwaway profile with no service
+worker and an empty cache, while its authenticated arm was warm. So `signin_cta=1` there
+was equally explained by "there was nothing cached to serve", and the case that actually
+matters — *warm profile, caches intact, session dead* — had never been rendered. That is
+exactly what a revoked session looks like from disk.
+
+Re-run with `--warm-control`: copy the real profile, delete **only** the cookie jar, leave
+everything else alone. `Cache`, `Code Cache` and `Service Worker` all confirmed present in
+the copy. Result:
+
+| arm | `signout_link` | `signin_cta` | settled URL |
+|---|---|---|---|
+| warm + no cookies, `service_workers=block` (what ships) | **0** | **1** | `/about` |
+| warm + no cookies, `service_workers=allow` | **0** | **1** | `/about` |
+
+Both arms render the landing page — `flow-landing-hero`, `flow-landing-pricing`,
+`flow-landing-faq` — not the app. **A warm cache does not mask a dead session**, so the
+rendered DOM is genuinely server-attested and cookie presence never decides. The two
+service-worker arms are identical, which means the `service_workers="block"` the fix now
+passes is belt-and-braces rather than load-bearing; it stays because it costs nothing and
+removes a whole class of future doubt, not because it was observed to matter.
 
 ## What this means for the design
 

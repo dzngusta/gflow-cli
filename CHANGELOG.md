@@ -18,11 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   When labs declines *and* the profile carries a `flow.google.com` app-session cookie, gflow now
   confirms the session against the host that actually serves the app. The cookie only **gates**
   that check and never decides it: a cookie on disk outlives a password change or a "sign out of
-  all devices", so treating its presence as proof would report a dead session as live.
+  all devices", so treating its presence as proof would report a dead session as live. That the
+  check really is server-attested was measured with a warm-cache control: a copy of a live
+  profile with only its cookie jar deleted renders the anonymous page, identically with
+  service workers allowed and blocked.
   **The check costs a browser because nothing cheaper exists.** Measured with an anonymous
   control ([spike](docs/superpowers/spikes/2026-09-16-migrated-session-oracle-needs-a-browser.md)):
-  `GET /` and `/tools/flow` both answer `200` with 39- and 47-byte deltas; a `batchexecute` read
-  without an `at` token returns `401` **even carrying a valid session**; `SNlM0e` is gone from the
+  `GET /` and `/tools/flow` both answer `200` with 27- and 45-byte deltas; a `batchexecute` read
+  without an `at` token returns `401` at the same 137 bytes in both arms **even carrying a
+  valid session**; `SNlM0e` is gone from the
   body; and the sign-in link appears in the raw HTML of *both* arms. Only the rendered DOM
   separates them — `signout_link` 1 vs 0, `signin_cta` 0 vs 1 — because Angular ships one shell
   to everybody and decides after it boots. The probe therefore runs only when labs declined
@@ -31,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `VERIFICATION_ERROR` as well as `GOOGLE_SESSION_ONLY`, so the fallback still runs on the day
   labs stops answering at all — the scenario it exists for. A session verified this way reports
   **no email**: that host discloses none in either arm, so `.gflow_account` is not written and
-  the `assert` that previously required one is gone. Both oracle call sites are covered,
+  the `assert` that previously required one is gone. Every oracle call site is covered,
   including `--browser internal`. The instrument and the regression are pinned by
   `tests/e2e/test_migrated_session_oracle_bdd.py`; the end-to-end rescue is confirmed by the
   reporter's cohort, since every account here is migrated with labs still alive.

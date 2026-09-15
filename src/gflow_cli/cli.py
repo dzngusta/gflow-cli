@@ -304,12 +304,25 @@ def auth_login(profile: str | None, browser: str | None, account: str | None = N
                     # the event can carry is the distinction it exists to make.
                     held_recorded=actual_account is not None,
                 )
+                nothing_recorded = actual_account is None
                 raise FlowAccountChooserError(
                     detail=(
                         f"Login completed but the profile now holds '{held}', which does not "
-                        f"match required --account '{account}'. Re-run "
-                        f"`gflow auth login --profile {name} --account {account.strip()}` "
-                        f"while signed in as the required account."
+                        f"match required --account '{account}'. "
+                        + (
+                            # #791: a session verified against flow.google.com records
+                            # no address, because that host discloses none. Telling this
+                            # user to "re-run while signed in as the required account"
+                            # sends them round a loop that cannot terminate.
+                            "The session was verified, but against flow.google.com, which "
+                            "discloses no address — so gflow has nothing to compare and "
+                            "--account cannot be enforced on this profile (#791). Re-run "
+                            "without --account to accept the login."
+                            if nothing_recorded
+                            else f"Re-run `gflow auth login --profile {name} "
+                            f"--account {account.strip()}` while signed in as the "
+                            f"required account."
+                        )
                     )
                 )
     except GFlowError as e:

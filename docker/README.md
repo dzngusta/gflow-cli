@@ -85,6 +85,48 @@ tools/list       : OK, 15 tools
 
 Re-run that after any base-image bump. If it stops holding, the interpreter is the first suspect.
 
+## Benchmark — measured 2026-09-15
+
+Reproduce with `docker/Dockerfile.test` (copy `dockerignore.example` to `.dockerignore` at the
+repo root first). All figures from this machine; treat them as shape, not as a spec.
+
+| Metric | Result |
+|---|---|
+| Runtime image (real Chrome + Xvfb) | **1.65 GB** |
+| Test image (repo + dev deps, no Chrome) | **714 MB** |
+| Cold container -> `gflow --version` | **1475 / 1516 / 1511 ms** |
+| Cold container -> MCP `initialize` + `tools/list` | **2228 / 2406 / 2495 ms** |
+| `uv sync` during build | **14.8 s** |
+| gflow's offline suite, **on Python 3.14** | **4379 passed, 28 skipped** in **6m08s** |
+
+The MCP figure is the one that matters for agents: roughly **2.3 s from cold container to a usable
+tool list**. A long-lived `serve` pays that once; a one-shot `docker run` pays it every call.
+
+**The suite result is the point of the 3.14 base.** CI's matrix is `["3.11","3.12","3.13"]`, so
+this is the first time gflow's tests have run on 3.14 at all — which is what makes the interpreter
+choice a measurement rather than a preference.
+
+### Two tests cannot pass in a container built from a git WORKTREE
+
+`test_real_tree_passes_root_doc_check` and `test_the_generator_ships_only_what_git_tracks` both
+shell out to `git ls-files` to introspect **the repository**. In a worktree, `.git` is a 71-byte
+*pointer file*:
+
+```
+gitdir: C:/development/github/gflow-cli/.git/worktrees/container-spike
+```
+
+Docker copies the pointer faithfully, and inside the container it dangles:
+
+```
+fatal: not a git repository: /app/C:/development/github/gflow-cli/.git/worktrees/container-spike
+```
+
+Both then fail with `CalledProcessError … exit status 128`. **This is the build context, not the
+interpreter** — they test repo state, not runtime behaviour. Build from the main checkout (where
+`.git` is a real directory) and they have a repo to query. Adding `.git` to the context does *not*
+fix it on its own; that was tried and the failures were identical.
+
 ## What is verified, and what is not
 
 | | |

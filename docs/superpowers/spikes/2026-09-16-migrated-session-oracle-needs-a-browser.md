@@ -33,6 +33,15 @@ XSRF-shaped token **absent**, `gaia_shaped_id` **absent**, any email **absent**
 (`email_count` 0), `WIZ_global_data` present, `aisandbox-root` present,
 `signin_cta` **present in both**.
 
+Then the rendered DOM, same page, Tier-1 structural anchors only:
+
+| Rendered anchor | authenticated | anonymous |
+|---|---|---|
+| `a[href*="SignOutOptions"]` | **1** | **0** |
+| `a[href*="accounts.google.com/ServiceLogin\|/signin"]` | **0** | **1** |
+| `[data-gaiaid], [data-authuser]` | 0 | 0 |
+| custom elements (`flow-*`, `aisandbox*`) | 10 | 19 |
+
 ## Verdict, against the readings pre-registered before the run
 
 **Q1 — `BROWSERLESS_BATCHEXECUTE_DEAD`.** No `SNlM0e` and no XSRF-shaped token in either
@@ -58,30 +67,48 @@ the mistake this spike's own first verdict function made, and it is the same def
 [#743](https://github.com/ffroliva/gflow-cli/issues/743): a verdict computed over an
 incomplete set. The verdict function now scopes Q2/Q3 to the migrated host.
 
+**Q4 — `ORACLE_EXISTS_BUT_COSTS_A_BROWSER`.** The rendered DOM separates the arms cleanly,
+on two independent Tier-1 anchors pointing the same way. This retires the "unverified"
+label the predict verdict put on that instrument.
+
+The contrast with the body sweep is the whole finding: **`signin_cta` is present in the raw
+HTML of both arms, and in the rendered DOM of only the anonymous one.** Angular ships one
+shell to everybody and decides after it boots. Any oracle that greps the response body is
+reading the shell, not the session — which is why every browserless instrument above came
+back flat.
+
 ## What this means for the design
 
-**Conditions (a) and (b) cannot both be met today.** There is no server-attested signal on
-flow.google.com reachable over plain HTTP. So the choice is forced:
+**Conditions (a) and (b) cannot both be met today**, and Q4 says which one survives:
 
-- keep **(a)** and spend a browser on a rendered-DOM probe — the instrument at
-  `2026-09-06-labs-vs-migrated-session-credential.md:94-99` (`avatar > 0` /
-  `signin_cta == 0`), still unverified, and note that `signin_cta` is present in the raw
-  HTML of *both* arms, so it must be read from the **rendered** DOM, never the body; or
-- keep **(b)** and accept that cookie presence is the whole oracle — which the predict
-  verdict already rejected, and which would report `AUTHENTICATED` for a revoked session.
+- **(a) is satisfiable** — the rendered DOM is genuinely server-attested. The app only
+  renders a sign-out link when the server answered the bootstrap as an authenticated
+  session, so it sees revocation, which cookie presence never can.
+- **(b) is not** — it costs a browser launch.
 
-**The verdict is what needs amending, not the code.** That is a maintainer decision, and
-it is the gate on Phase 3 for #791.
+So the shape that the evidence supports is **cookie-gate → browser probe**: derive
+`flow_host_session` from the jar both readers already hold (cheap, no launch), and let it
+*gate* a rendered-DOM probe that only runs on the narrow path — outcome in
+`{GOOGLE_SESSION_ONLY, VERIFICATION_ERROR}` **and** flow.google.com cookies present. Every
+ordinary verification still pays nothing; only the migrated-and-labs-dead case pays for a
+browser, which is the case that is currently broken outright.
+
+That keeps the predict verdict's intent — cookie presence gates, it does not decide — and
+drops only the clause the surface no longer supports. **Amending it is a maintainer
+decision and it gates Phase 3 for #791.**
 
 ## Not measured
 
-- **The rendered-DOM instrument itself.** This spike made no browser probe; whether
-  `avatar` / `signin_cta` separate the arms in the *rendered* Angular DOM is still open,
-  and it is the obvious next rung.
+- **A labs-dead account.** This profile is migrated with labs *alive*; the arms here are
+  cookies-vs-no-cookies, not labs-alive-vs-labs-dead. What is measured — what
+  flow.google.com discloses, and to whom — is the same question either way, but the
+  end-to-end happy path still needs the #791 cohort to verify it. Named external blocker,
+  per the Iron Law.
+- **Locale.** Both arms ran on an `en` UI. The anchors are `href` substrings and so should
+  be locale-invariant by construction, but `ru` is where #791 and #799 both live and it is
+  unverified there.
 - **Other read rpcids.** Only `jwpduf` was probed. `as29s` and the project-load reads may
   gate differently, though a shared `at` requirement makes that unlikely.
 - **batchexecute *with* a valid `at`.** Not obtainable browserlessly, which is the finding.
-- **The #791 cohort itself.** This profile is migrated with labs *alive*. The arms here are
-  cookies-vs-no-cookies, not labs-alive-vs-labs-dead. Nothing measured here is evidence
-  about what a labs-dead account is served — only about what flow.google.com discloses
-  over plain HTTP, which is the same question either way.
+- **Whether the 10-vs-19 custom-element delta is stable.** It points the same way as the
+  two anchors, but one observation is not a signal, and it is not needed if the anchors hold.

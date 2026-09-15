@@ -60,6 +60,19 @@ Q2b. (added before the second run, after Q1 came back "absent in both")
                           unsatisfiable together with "must be server-attested",
                           and the verdict is what has to change.
 
+Q4. (added before the third run, after Q2/Q2b came back "no browserless oracle")
+    Does the RENDERED DOM separate the arms? This is the instrument the predict
+    verdict listed as "what may still work (unverified)" — from spike
+    2026-09-06-labs-vs-migrated-session-credential.md:94-99.
+    arms differ on a Tier-1 structural anchor
+                       -> the oracle EXISTS but costs a browser. Condition (a)
+                          is satisfiable, (b) is not, and the design is
+                          cookie-gate -> browser probe on the narrow path.
+    arms identical     -> NOTHING on flow.google.com separates an authenticated
+                          client from an anonymous one, by any instrument we
+                          have. The oracle concept collapses and #791 needs a
+                          different approach entirely — report that loudly.
+
 Q3. Does any arm carry the account email or a GAIA-shaped id?
     present -> `user_email` can be populated on the migrated arm.
     absent  -> `user_email` must be None, and the assert at
@@ -80,8 +93,9 @@ import asyncio
 import json
 import re
 import sys
+from contextlib import AsyncExitStack
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT / "src") not in sys.path:
@@ -228,6 +242,76 @@ def _batchexecute(cookie: str) -> dict[str, Any]:
     }
 
 
+async def _rendered_dom(profile_dir: Path | None) -> dict[str, Any]:
+    """Rendered-DOM probe on flow.google.com — `profile_dir=None` is the anonymous control.
+
+    Tier-1 structural anchors only (AGENTS.md locale-invariance): `href`
+    substrings and custom-element tag names. Never display text — the raw HTML
+    already showed `signin_cta` present in BOTH arms, so any text or link-in-
+    source heuristic is known-wrong here; only what Angular actually renders
+    can carry the signal.
+
+    `goto` returns before Flow's client-side redirect settles (memory:
+    goto-returns-before-client-side-redirect), so this waits for the network to
+    go idle before snapshotting.
+    """
+    from playwright.async_api import async_playwright
+
+    from gflow_cli.browser_manager import channel_for_profile, ensure_profile_engine_compatible
+
+    js = """() => {
+        const q = (s) => document.querySelectorAll(s).length;
+        const tags = new Set(
+            [...document.querySelectorAll('*')]
+                .map(e => e.tagName.toLowerCase())
+                .filter(t => t.startsWith('flow-') || t.startsWith('aisandbox'))
+        );
+        return {
+            signout_link: q('a[href*="SignOutOptions"]'),
+            account_link: q('a[href*="myaccount.google.com"]'),
+            signin_cta: q('a[href*="accounts.google.com/ServiceLogin"], '
+                        + 'a[href*="accounts.google.com/signin"]'),
+            gaiaid_attr: q('[data-gaiaid], [data-authuser]'),
+            aisandbox_root: q('aisandbox-root'),
+            custom_elements: [...tags].sort(),
+            url: location.href,
+        };
+    }"""
+
+    async with AsyncExitStack() as stack:
+        # Chrome must never start on a profile this process does not own.
+        if profile_dir is not None:
+            await stack.enter_async_context(ProfileLease(profile_dir))
+        pw = await stack.enter_async_context(async_playwright())
+        if profile_dir is not None:
+            channel = channel_for_profile(profile_dir)
+            ensure_profile_engine_compatible(profile_dir, channel)
+            ctx = await pw.chromium.launch_persistent_context(
+                user_data_dir=str(profile_dir),
+                channel=channel,
+                headless=True,
+                args=["--password-store=basic"],
+            )
+        else:
+            import tempfile
+
+            ctx = await pw.chromium.launch_persistent_context(
+                user_data_dir=tempfile.mkdtemp(prefix="spike_anon_"),
+                headless=True,
+                args=["--password-store=basic"],
+            )
+        try:
+            page = await ctx.new_page()
+            await page.goto("https://flow.google.com/", wait_until="domcontentloaded")
+            try:
+                await page.wait_for_load_state("networkidle", timeout=30_000)
+            except Exception:  # noqa: BLE001 — a busy page is still snapshottable
+                await page.wait_for_timeout(5_000)
+            return cast("dict[str, Any]", await page.evaluate(js))
+        finally:
+            await ctx.close()
+
+
 def _verdict(result: dict[str, Any]) -> dict[str, str]:
     """Apply the pre-registered readings to the data. No freehand grading.
 
@@ -281,6 +365,19 @@ def _verdict(result: dict[str, Any]) -> dict[str, str]:
         if (id_a or emails)
         else "IDENTITY_ABSENT — user_email must be None on the migrated arm"
     )
+
+    dom_a = arms["authenticated"].get("rendered_dom", {})
+    dom_b = arms["anonymous"].get("rendered_dom", {})
+    anchors = ("signout_link", "account_link", "signin_cta", "gaiaid_attr")
+    dom_diff = [k for k in anchors if dom_a.get(k) != dom_b.get(k)]
+    if dom_diff:
+        out["Q4"] = (
+            f"ORACLE_EXISTS_BUT_COSTS_A_BROWSER — rendered DOM differs on: {', '.join(dom_diff)}"
+        )
+    elif dom_a and dom_b:
+        out["Q4"] = "NO_ORACLE_BY_ANY_INSTRUMENT — rendered DOM identical too; concept collapses"
+    else:
+        out["Q4"] = "UNMEASURED — a rendered-DOM arm did not complete"
     return out
 
 
@@ -332,6 +429,19 @@ async def main() -> int:
             f"wrb={bx.get('has_wrb_frame')}"
         )
 
+    for arm, target in (("authenticated", profile_dir), ("anonymous", None)):
+        print(f"[3/4] rendered DOM: {arm}")
+        try:
+            dom = await _rendered_dom(target)
+        except Exception as exc:  # noqa: BLE001 — a failed arm is a datum, not a crash
+            dom = {"error": type(exc).__name__, "detail": str(exc)[:200]}
+        result["arms"][arm]["rendered_dom"] = dom
+        print(
+            f"      signout={dom.get('signout_link')} account={dom.get('account_link')} "
+            f"signin_cta={dom.get('signin_cta')} gaiaid={dom.get('gaiaid_attr')} "
+            f"custom={len(dom.get('custom_elements', []))}"
+        )
+
     result["verdict"] = _verdict(result)
 
     out_dir = _ROOT / "scripts" / "dev" / "_spike_out"
@@ -339,7 +449,7 @@ async def main() -> int:
     out = out_dir / f"spike_migrated_session_oracle_{args.profile}.json"
     out.write_text(json.dumps(result, indent=2), encoding="utf-8")
 
-    print("[3/3] verdict (pre-registered readings applied):")
+    print("[4/4] verdict (pre-registered readings applied):")
     for q, v in result["verdict"].items():
         print(f"      {q}: {v}")
     print(f"      evidence -> {out}")

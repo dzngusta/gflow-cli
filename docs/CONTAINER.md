@@ -1,0 +1,129 @@
+# Running gflow-cli in a container
+
+A container image of gflow-cli exists, it is built automatically, and it **cannot generate
+anything**. Both halves of that sentence matter, so this page says what the image is for, what it
+provably does, where the hard limit comes from, and why there is no Docker Hub or Docker MCP
+Catalog listing.
+
+## What the image is for
+
+[Glama](https://glama.ai/mcp/servers/ffroliva/gflow-cli) runs automated safety and quality checks
+on the MCP servers it lists, and only servers that pass those checks appear in its search
+results. To run them it builds a container from a spec and asks the server to introspect itself.
+
+That is the image's entire purpose: **a health check**. It is not a way to run gflow.
+
+## The build spec lives in this repository
+
+[`glama.json`](../glama.json) is the tracked copy of the spec Glama builds from:
+
+```json
+{
+  "baseImage": "debian:trixie-slim",
+  "buildSteps": ["uv sync"],
+  "cmdArguments": ["mcp-proxy", "--", "/app/.venv/bin/gflow", "mcp", "run"],
+  "placeholderArguments": {}
+}
+```
+
+Glama generates the actual Dockerfile from these fields — it clones this repository at the
+default branch's head, runs the build steps, then starts `cmdArguments`. `mcp-proxy` is the
+bridge: Glama pings over HTTP, gflow speaks stdio.
+
+**The spec is guarded by tests.** [`tests/test_glama_build_spec.py`](../tests/test_glama_build_spec.py)
+asserts that the spawned executable is a console script this project defines, that it is an
+absolute path into the uv virtualenv, that a build step creates that virtualenv, that the proxy
+fronts it, and that the subcommand matches every other distribution artifact.
+
+> **Why those tests exist.** The spec used to live only in a web form, so nothing in this
+> repository described it and nothing could check it. Two builds failed with
+> `could not start the proxy Error: spawn gflow ENOENT`. The image built fine — `uv sync`
+> installs console scripts into `/app/.venv/bin`, which is never added to `PATH`, so a `CMD`
+> naming a bare `gflow` missed and the container exited before answering a single request.
+> A failing container is still listed but excluded from search results, which in turn blocks the
+> awesome-list entries that gate on a Glama score.
+
+Editing `glama.json` does **not** change what Glama builds — its copy lives in the server's admin
+page and has to be changed there too. The tests keep the repository honest about what we told it;
+they cannot tell you the image still boots. After changing either, re-run the build from the
+Glama admin page and read the result.
+
+## What it provably does
+
+From the passing build (`01a0a3c1-c0a3-7462-bb4b-350a715ca63b`, 31.2 s):
+
+```
+mcp.server.starting   cli_version 0.74.0
+initialize    →  serverInfo {name: gflow-cli}, protocolVersion 2025-11-25
+tools/list    →  15 tools
+prompts/list  →  2 prompts
+resources/list → 3 resources
+```
+
+No browser, no credentials, no Google session. The same 15 tools appear when the server is run
+locally against a throwaway `GFLOW_CLI_HOME`, which is the point: **enumerating the surface needs
+nothing.**
+
+## What it cannot do, and why
+
+Every tool in that list that actually generates media will fail in the container.
+
+gflow drives Flow through a **real, headed Chrome session signed in to your Google account** —
+see [ARCHITECTURE.md](ARCHITECTURE.md). Google's auth and reCAPTCHA stack rejects browsers that
+advertise automation and most headless approaches. The check image does not even install
+Chromium, because it does not need it to answer `tools/list`.
+
+So the container is in a genuinely odd state, and it is worth being blunt about it: it passes
+every check Glama can run, and it would fail the first thing a user asked of it. Introspection
+and capability are different questions, and only the first one is containerisable today.
+
+Making it real would need all of: Chromium in the image, a logged-in Chrome profile mounted in, a
+display server for the headed session, and Google's anti-automation stack accepting a
+container-run browser. The first three are work; the fourth is not ours to decide.
+
+## Why there is no Docker Hub image
+
+Publishing the check image to Docker Hub would ship something that looks installable and is not.
+Someone would `docker run` it, watch `tools/list` succeed, call a generate tool and get a failure
+that has nothing to do with their setup. A green badge on a broken install is worse than no
+listing.
+
+If a working containerised transport ever lands — the pure-HTTP transport tracked in
+[ARCHITECTURE.md](ARCHITECTURE.md) would be the unlock — this decision should be revisited. It is
+a deliberate "not yet", not a permanent no.
+
+## Why there is no Docker MCP Catalog entry
+
+Docker's [MCP Registry](https://github.com/docker/mcp-registry) accepts community submissions, and
+gflow-cli clears its licence bar (MIT; they exclude GPL). Two things block it:
+
+1. **Reviewers need working credentials.** Docker's `CONTRIBUTING.md` requires every submission to
+   share test credentials so their team can verify the server. gflow authenticates against a
+   personal Google account — supplying that means handing over the account and its Veo credit
+   balance. There is no throwaway Flow account to provision instead.
+2. **The container cannot do the job**, per the section above. Docker Desktop's MCP Toolkit runs
+   catalog servers in containers and expects them to work.
+
+Both are properties of the headed-browser architecture rather than of the submission process, so
+neither is fixed by trying harder at the paperwork.
+
+## Running the check yourself
+
+The Glama admin page shows the generated Dockerfile and the two commands to reproduce it:
+
+```bash
+docker build -t mcp-server .
+docker run -it --rm -e MCP_PROXY_DEBUG=true mcp-server
+```
+
+A successful run starts the proxy, logs `mcp.server.starting`, and answers `initialize` and
+`tools/list`. A `spawn ... ENOENT` means the `cmdArguments` path no longer matches where the build
+step puts the console script — the failure
+[`tests/test_glama_build_spec.py`](../tests/test_glama_build_spec.py) now catches offline.
+
+## See also
+
+- [MARKETPLACES.md](MARKETPLACES.md) — every channel and what each delivers
+- [DISTRIBUTION.md](DISTRIBUTION.md) — submission status per channel
+- [MCP.md](MCP.md) — the MCP server itself, and per-client setup
+- [ARCHITECTURE.md](ARCHITECTURE.md) — the headed-browser dependency this page keeps running into

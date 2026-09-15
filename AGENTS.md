@@ -74,8 +74,8 @@ If you can help unblock a pure HTTP transport (especially for video generation, 
 
 Run these gates in order before every commit:
 
-```powershell
-$env:PYTHONUTF8=1
+```bash
+export PYTHONUTF8=1          # Windows PowerShell: $env:PYTHONUTF8 = "1"
 uv run python scripts/ci/check_repo_hygiene.py
 uv run python scripts/ci/check_doc_links.py
 uv run python scripts/ci/check_website_docs_pii.py
@@ -339,7 +339,7 @@ content in a vendor directory.
 **Codex CLI / desktop app:** install the repo's skills-only plugin from the repository root,
 then start a new session:
 
-```powershell
+```bash
 codex plugin marketplace add .
 codex plugin add gflow@gflow-cli
 ```

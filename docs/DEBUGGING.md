@@ -54,10 +54,18 @@ trigger not found — a structural DOM signature; this probe writes no
 screenshot) and `debug_no_image_tab.png` (Image tab missing inside the open
 dropdown).
 
-Pipe `--verbose` output through `Select-String` (PowerShell) or `grep` to
+Pipe `--verbose` output through `grep` (POSIX) or `Select-String` (PowerShell) to
 filter:
 
+```bash
+export PYTHONUTF8=1
+uv run gflow --verbose image t2i "prompt" --profile <name> --out tmp/debug 2>&1 |
+  tee tmp/debug/run.log |
+  grep -E 'batch_response|aspect_ratio|prompt_submitted|error_unhandled'
+```
+
 ```powershell
+# PowerShell
 $env:PYTHONUTF8 = "1"
 uv run gflow --verbose image t2i "prompt" --profile <name> --out tmp\debug 2>&1 |
   Tee-Object tmp\debug\run.log |
@@ -151,7 +159,7 @@ with a hard privacy gate (any leaked identifier → grade F). Reusable on a
 bundle a user emails you:
 
 ```bash
-.venv/Scripts/python.exe scripts/dev/incident_bundle_quality.py <bundle-dir> [known-secret ...]
+uv run python scripts/dev/incident_bundle_quality.py <bundle-dir> [known-secret ...]
 ```
 
 It prints a scorecard (grade, per-question YES/NO/N/A, privacy verdict). The
@@ -252,16 +260,19 @@ For health probes from a worker process, use
 See [`LIVE_VERIFICATION_v0.7.0.md`](LIVE_VERIFICATION_v0.7.0.md) for the
 canonical example. Short form:
 
-```powershell
-$env:PYTHONUTF8 = "1"
-mkdir -p tmp\debug
+```bash
+export PYTHONUTF8=1          # Windows PowerShell: $env:PYTHONUTF8 = "1"
+mkdir -p tmp/debug
 
-uv run gflow --verbose image t2i "<prompt>" `
-  --profile <your-profile-name> `
-  --count 1 `
-  --aspect <9:16|16:9|1:1|4:3|3:4> `
-  --out tmp\debug
+uv run gflow --verbose image t2i "<prompt>" \
+  --profile <your-profile-name> \
+  --count 1 \
+  --aspect <9:16|16:9|1:1|4:3|3:4> \
+  --out tmp/debug
 ```
+
+On PowerShell the flags are the same; only the line-continuation character differs
+(a backtick instead of `\`), and `tmp\debug` may be spelled with backslashes.
 
 ## Test suite memory
 

@@ -16,8 +16,8 @@ run names what stopped it.
 | 3 | Remediation naming an extra survives Rich rendering | CLI console | ✅ $0 + neutered control |
 | 4 | `gflow-cli` console script (`uvx gflow-cli …`) | packaging | ✅ real wheel, real venv |
 | 5 | Claude Code plugin installs and curates to two skills | `claude plugin` | ✅ clean `CLAUDE_CONFIG_DIR` |
-| 6 | PyPI metadata: summary, sidebar links, classifiers | PyPI page | ⏳ **only observable after upload** — see §6 |
-| 7 | `server.json` / MCP Registry listing | registry | ⏳ **blocked until this release is on PyPI** — see §7 |
+| 6 | PyPI metadata: summary, sidebar links, classifiers | PyPI page | ✅ **verified on the published page** — see §6 |
+| 7 | `server.json` / MCP Registry listing | registry | ⚠️ **unblocked — token verified live, submission pending a tool install** — see §7 |
 | 8 | "unofficial" dropped as a label | docs, README, site | n/a — touches no runtime surface |
 
 ---
@@ -133,23 +133,42 @@ maintainer-only skill directory appears.
 > shipped to users; CI checks out clean and would never have seen it. Both are fixed and both
 > were invisible to a green gate.
 
-## 6. PyPI metadata — not verifiable before the upload
+## 6. PyPI metadata — verified on the published page
 
 The rewritten summary, the `Documentation` / `Repository` / `Changelog` sidebar links and the ten
 added classifiers are **frozen per release**: PyPI renders the metadata of the last uploaded
-artefact, so there is no way to observe them until this release is published. The three URLs were
+artefact, so there was no way to observe them until this release was published. The three URLs were
 each fetched live and returned HTTP 200, and every classifier was checked against the official
-895-entry trove list (an invented one fails the upload outright), but the rendered page itself is
+895-entry trove list (an invented one fails the upload outright), but the rendered page itself was
 **unverified until publish** — a property of the platform, not a skipped run.
 
-## 7. MCP Registry — blocked on this release reaching PyPI
+**Closed after the upload** (read back from the PyPI JSON API for 0.75.0):
+
+```
+version:     0.75.0
+summary:     CLI and MCP server for Google Flow — drive Veo text-to-video, …
+classifiers: 18
+project_urls: Documentation · Repository · Changelog · Homepage · Funding
+```
+
+## 7. MCP Registry — unblocked; the ownership token is verified live
 
 `mcp-publisher` verifies ownership by reading the `mcp-name:` token out of the **published** PyPI
-README. That token is on `develop` and ships here, but the currently published artefact is 0.74.0,
-which predates it. So the registry submission cannot be attempted until this release is live — a
-named external blocker with a defined removal step, not an omission. `tests/test_server_json.py`
-pins the version lockstep, the 100-character description cap, the name pattern, the token's
-presence and that the advertised command exists.
+README. That token was on `develop` and shipped here, but at the time of writing the published
+artefact was 0.74.0, which predates it — a named external blocker with a defined removal step.
+
+**The blocker is gone.** Read back from the published 0.75.0 description:
+
+```
+published README:  <!-- mcp-name: io.github.ffroliva/gflow-cli -->
+server.json name:  io.github.ffroliva/gflow-cli          MATCH: True
+```
+
+What remains is not a blocker on this release but a tooling step: `mcp-publisher` is not installed
+here, and its `login github` is an interactive device-code flow. Note also that `mcp-publisher
+init` would **overwrite** the existing `server.json` — use `mcp-publisher validate` instead.
+`tests/test_server_json.py` pins the version lockstep, the 100-character description cap, the name
+pattern, the token's presence and that the advertised command exists.
 
 ---
 

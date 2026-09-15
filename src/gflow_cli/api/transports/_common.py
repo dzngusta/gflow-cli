@@ -24,6 +24,7 @@ from gflow_cli.data.redaction import redact_error_detail
 from gflow_cli.errors import (
     AuthExpiredError,
     ContentPolicyError,
+    FlowAccessUnavailableError,
     FlowAccountChooserError,
     FlowApiError,
     FlowAppError,
@@ -202,7 +203,40 @@ def safe_page_url(url: object) -> str:
     return f"{parts.scheme}://{parts.netloc}{parts.path}"
 
 
-def raise_if_known_landing(page: object, *, requested: str, at: str) -> None:
+#: Flow's own component for "this account cannot use Flow". Measured 2026-09-15 on a
+#: new free Google account (`scripts/dev/spike_flow_unavailable_signal.py`): the shell
+#: renders `aisandbox-root > router-outlet > flow-pinhole-unavailable-screen`.
+#:
+#: A component tag, not a path, and not a status. The spike found no entitlement field
+#: on the wire; `flow.google.com/` answers **200** with the hop done client-side, so
+#: there is no 3xx to read; and the path is not stable — `/unavailable` and
+#: `/u/8/unavailable` were both observed on one account, the latter carrying Google's
+#: account-index segment. The component is the only anchor that survives all three,
+#: and it is locale-invariant by construction (AGENTS.md Tier 1).
+UNAVAILABLE_SCREEN = "flow-pinhole-unavailable-screen"
+
+
+async def _shows_unavailable_screen(page: object) -> bool:
+    """True when Flow has rendered its unavailable screen on `page`.
+
+    Total by construction, like its URL-reading siblings: a page object that cannot
+    be queried, or a locator engine that raises, returns False so that a probe error
+    can never displace the caller's own diagnosis — which is the failure it is being
+    called from the middle of.
+    """
+    locator = getattr(page, "locator", None)
+    if not callable(locator):
+        return False
+    try:
+        # Annotated Any deliberately: `callable()` narrows to `(...) -> object`, which
+        # would make the awaited `.count()` unknown to pyright.
+        found: Any = locator(UNAVAILABLE_SCREEN)
+        return bool(await found.count() > 0)
+    except Exception:  # noqa: BLE001 - a probe that fails is a probe that saw nothing
+        return False
+
+
+async def raise_if_known_landing(page: object, *, requested: str, at: str) -> None:
     """Replace an about-to-be-raised drift report when the page is a **known landing**.
 
     Call this from **inside a failure branch**, at a point where the caller is already
@@ -229,6 +263,31 @@ def raise_if_known_landing(page: object, *, requested: str, at: str) -> None:
     being in it.
     """
     url = str(getattr(page, "url", "") or "")
+
+    # Checked before the URL kinds, and by DOM rather than path. This state is
+    # invisible to `flow_landing_kind`: the unavailable screen is served from a Flow
+    # origin on an ordinary path, so the URL half returns None and the caller's drift
+    # diagnosis stands. Measured as an A/B on 2026-09-15 with this probe neutered: the
+    # caller reported exit 23, "Google may have updated their frontend — file a bug",
+    # and wrote an incident bundle holding a screenshot of the user's own account page,
+    # for an account that simply has no Flow subscription.
+    if await _shows_unavailable_screen(page):
+        safe = safe_page_url(url)
+        log.info(
+            "ui_driver.known_landing", at=at, kind="unavailable", url=safe, requested=requested
+        )
+        raise FlowAccessUnavailableError(
+            detail=(
+                f"Flow served its unavailable screen ({safe}) instead of {requested} — "
+                f"this Google account cannot reach Flow at all. Not selector drift, and "
+                f"not a session problem: the app loaded and routed to the screen it "
+                f"renders for an account without access."
+            ),
+            # Measured, not a class default: the screen renders on every visit for
+            # this account, and no login can grant access that was never purchased.
+            retryable=False,
+        )
+
     kind = flow_landing_kind(url)
     if kind is None:
         return

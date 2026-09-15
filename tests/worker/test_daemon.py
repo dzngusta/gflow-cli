@@ -827,6 +827,50 @@ async def test_migrated_host_error_crosses_the_queued_path(temp_db: DataStore) -
     worker.close()
 
 
+async def test_the_no_flow_access_verdict_crosses_the_queued_path(temp_db: DataStore) -> None:
+    """The MCP twin of exit 39, run rather than reasoned about (AGENTS.md § second law).
+
+    ``daemon.py`` names no error class: it resolves an exit code by walking
+    ``EXIT_CODE_MAP`` and taking the first ``isinstance`` hit, with a fallback of **1**.
+    A class registered in the map but shadowed by a broader earlier entry would reach an
+    agent as a generic failure with no remediation, and every CLI-side test would still
+    pass. So this drives the real ``process_task`` and reads the persisted row back.
+
+    ``remediation_hint`` is asserted because it is the only part an agent can act on: a
+    correct exit code attached to "run auth login" would still send it round the loop.
+    """
+    from gflow_cli.errors import FlowAccessUnavailableError, is_retryable
+
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-t2i-no-flow-access",
+        profile_name="default",
+        task_type="t2i",
+        payload={"prompt": "scenic landscape"},
+    )
+
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.create_project.return_value = MagicMock(project_id="project-abc", title="T")
+    exc = FlowAccessUnavailableError(detail="Flow served its unavailable screen")
+    fake_client.generate_image.side_effect = exc
+
+    with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
+        await worker.process_task(task)
+
+    updated = repo.get_task("task-t2i-no-flow-access")
+    assert updated is not None
+    assert updated.status == "failed"
+    assert updated.error is not None
+    assert updated.error["exit_code"] == 39, "shadowed by an earlier EXIT_CODE_MAP entry"
+    assert updated.error["retryable"] is False
+    assert updated.error["retryable"] is is_retryable(exc)
+    hint = str(updated.error.get("remediation_hint", "")).casefold()
+    assert "subscription" in hint or "google ai" in hint, hint
+    assert "auth login" not in hint, "an agent told to re-login would loop forever"
+    worker.close()
+
+
 # ---------------------------------------------------------------------------
 # #776 — what an MCP caller actually receives when a click never lands
 #

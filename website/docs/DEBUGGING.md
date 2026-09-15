@@ -124,7 +124,15 @@ also shows the recorded lock owner's PID/start-time evidence — advisory
 only, the kernel lock stays authoritative and nothing is ever reclaimed).
 
 Never captured: expected `ContentPolicyError`, ordinary `AuthExpiredError`,
-usage/config validation, cancellation (Ctrl-C). **That `AuthExpiredError` exclusion
+`FlowAccessUnavailableError` (39), usage/config validation, cancellation (Ctrl-C).
+`FlowAccessUnavailableError` is excluded **by falling through** rather than by a named
+exclusion: it is a direct `GFlowError` subclass and is not in `_capture_triggers()`, so
+`should_capture()` returns `False` on its generic-`GFlowError` arm. That is the wanted
+answer — the account has no Flow entitlement, the remediation is a subscription, and a
+DOM dump of Flow's unavailable screen tells nobody anything. If Flow ever renames
+`<flow-pinhole-unavailable-screen>` the class stops firing entirely and the failure
+reverts to `UiSelectorDriftError` (23), which *is* captured — so the evidence path for
+the case where we need evidence is already open. **That `AuthExpiredError` exclusion
 now covers one more path than it used to:** since
 [#756](https://github.com/ffroliva/gflow-cli/issues/756), landing on one of Flow's
 OAuth/sign-in routes raises `AuthExpiredError` where it previously raised

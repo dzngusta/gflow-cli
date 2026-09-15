@@ -32,7 +32,7 @@ channel no longer accepts anything).
 | [hesreallyhim/awesome-claude-code](https://github.com/hesreallyhim/awesome-claude-code) | Claude Code (54k★) | Issue | **submitted** ([#2844](https://github.com/hesreallyhim/awesome-claude-code/issues/2844)) | 2026-09-15 |
 | [ComposioHQ/awesome-claude-skills](https://github.com/ComposioHQ/awesome-claude-skills) | Claude skills (75k★) | PR | **submitted** ([#1905](https://github.com/ComposioHQ/awesome-claude-skills/pull/1905)) · `ready-to-merge`, awaiting review | 2026-09-15 |
 | [travisvn/awesome-claude-skills](https://github.com/travisvn/awesome-claude-skills) | Claude skills (15k★) | PR | **submitted** ([#1244](https://github.com/travisvn/awesome-claude-skills/pull/1244)) | 2026-09-15 |
-| [mcpservers.org](https://mcpservers.org/submit) | MCP discovery | Web form (no PRs) | **submitted** | 2026-09-15 |
+| [mcpservers.org](https://mcpservers.org/servers/ffroliva/gflow-cli) | MCP discovery | Web form (no PRs) | **listed** · approved 2026-09-15 · badge in README | 2026-09-16 |
 | [cursor.directory](https://cursor.directory/plugins/gflow-cli) | Cursor users | Web form | **listed** | 2026-09-15 |
 | [appcypher/awesome-mcp-servers](https://github.com/appcypher/awesome-mcp-servers) | MCP (5.8k★) | — | **closed** (archived) | 2026-09-15 |
 | Claude Code plugin marketplace (ours) | Claude Code users | — (self-hosted) | shipped | 2026-09-14 |
@@ -264,7 +264,11 @@ Free win: add the badge and the `npx skills add ffroliva/gflow-cli` line to the 
   returned 404. Read-only repositories fail late and confusingly, so the lesson is the general
   one: check `archived` before planning a contribution, not after.
 - **mcpservers.org** (via wong2's list). **PRs are explicitly refused**; the web form at
-  `mcpservers.org/submit` is the only door.
+  `mcpservers.org/submit` is the only door. **Approved 2026-09-15**, live at
+  [`/servers/ffroliva/gflow-cli`](https://mcpservers.org/servers/ffroliva/gflow-cli); the
+  approval mail supplies a README badge, which is now in the badge block. Their follow-up
+  pitches a paid sponsorship for placement on the site and in `awesome-mcp-servers` — the
+  free listing is what we took, and the badge does not depend on it.
 
 Two Claude-skills lists were added after the first pass and submitted the same day:
 

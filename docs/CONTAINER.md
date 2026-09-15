@@ -1,9 +1,15 @@
 # Running gflow-cli in a container
 
-A container image of gflow-cli exists, it is built automatically, and it **cannot generate
-anything**. Both halves of that sentence matter, so this page says what the image is for, what it
-provably does, where the hard limit comes from, and why there is no Docker Hub or Docker MCP
-Catalog listing.
+**The Glama image** of gflow-cli is built automatically and cannot generate anything — it
+installs no browser, by design. This page says what that image is for and what it provably does.
+
+> **Corrected 2026-09-15.** This page previously generalised that into *"a container cannot run
+> gflow"*. That was wrong, and it was wrong in an instructive way: the claim was true of the
+> **health-check image** and was presented as a fact about containers. A measured spike refutes
+> the strong form — in a container with real Chrome, gflow runs, Chrome launches headed under
+> Xvfb, and `navigator.webdriver` is `None`. See
+> [the spike](superpowers/spikes/2026-09-15-container-transport-viability.md) and
+> [`docker/`](../docker/README.md) for the protocol and exactly how far it is verified.
 
 ## What the image is for
 
@@ -64,9 +70,9 @@ No browser, no credentials, no Google session. The same 15 tools appear when the
 locally against a throwaway `GFLOW_CLI_HOME`, which is the point: **enumerating the surface needs
 nothing.**
 
-## What it cannot do, and why
+## What THIS image cannot do, and why
 
-Every tool in that list that actually generates media will fail in the container.
+Every tool in that list that generates media will fail in **the Glama check image**.
 
 gflow drives Flow through a **real, headed Chrome session signed in to your Google account** —
 see [ARCHITECTURE.md](ARCHITECTURE.md). Google's auth and reCAPTCHA stack rejects browsers that
@@ -77,9 +83,12 @@ So the container is in a genuinely odd state, and it is worth being blunt about 
 every check Glama can run, and it would fail the first thing a user asked of it. Introspection
 and capability are different questions, and only the first one is containerisable today.
 
-Making it real would need all of: Chromium in the image, a logged-in Chrome profile mounted in, a
-display server for the headed session, and Google's anti-automation stack accepting a
-container-run browser. The first three are work; the fourth is not ours to decide.
+Making it real needs: **real Google Chrome** in the image (Chromium does not satisfy
+`channel="chrome"`, which resolves only to `/opt/google/chrome/chrome`), a logged-in profile in a
+mounted volume, a display server, and Google accepting the session. **The first three are now
+measured as working** — see the spike. The fourth is still unmeasured, because it needs an
+interactive sign-in nobody has run yet; a clean fingerprint is a necessary condition, not a
+sufficient one.
 
 ## Why there is no Docker Hub image
 

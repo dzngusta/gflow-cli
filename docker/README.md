@@ -67,6 +67,24 @@ That is the intended behaviour, not a bug to fix. Since v0.75.0 `gflow serve` ve
 on **every** request; a daemon exposed without one hands every tool to any local caller. The port
 is published to `127.0.0.1` only for the same reason.
 
+## Verified on this image
+
+CI's matrix is `["3.11","3.12","3.13"]`, so the 3.14 base is not covered by the test suite.
+A container pins its interpreter, so this is deterministic rather than an ambient version that
+could surprise someone — and the gap is closed by verifying the image's runtime contract directly
+rather than by staying on an older interpreter:
+
+```
+python           : 3.14.7
+gflow_cli        : 0.75.0
+chrome channel   : True          (is_playwright_chrome_channel_available)
+chrome available : True          (is_chrome_available)
+initialize       : OK, server "gflow-cli"
+tools/list       : OK, 15 tools
+```
+
+Re-run that after any base-image bump. If it stops holding, the interpreter is the first suspect.
+
 ## What is verified, and what is not
 
 | | |

@@ -1649,7 +1649,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         # reported as a missing CTA. Consulted only HERE, after the sweep has already
         # run: an early bail would delete the DOM evidence that corrects a wrong
         # absence claim, which is how #739 shipped one (see the note below).
-        raise_if_known_landing(page, requested="the Flow gallery", at="labs.enter_editor")
+        await raise_if_known_landing(page, requested="the Flow gallery", at="labs.enter_editor")
 
         shot_path = await _capture_debug_screenshot(page, out_dir, "debug_new_project.png")
         # NO migrated-host branch here. #739 added one asserting that
@@ -1689,6 +1689,14 @@ class UiAutomationTransport(VideoGenerationMixin):
             MODE_SWITCH_TRIGGER_SELECTORS,
         )
         if trigger is None:
+            # Reached on the labs arm when --project was supplied: `_enter_editor` returns
+            # early there with no readiness gate, so the guard in its gallery arm never
+            # ran. Consulted here, where the caller is already about to raise, and BEFORE
+            # `_mode_switch_error` classifies -- that helper would otherwise answer
+            # "migrated host" or "selector drift" for an account that simply has no Flow.
+            await raise_if_known_landing(
+                page, requested="the Flow editor", at="labs.switch_to_image_mode"
+            )
             raise await VideoGenerationMixin._mode_switch_error(page, out_dir, media="image")
         await trigger.click()
         await page.wait_for_timeout(_jitter_ms(800))
@@ -1742,7 +1750,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         # this sweep. It raises a bare RuntimeError, which `observability.py` SHA-256
         # hashes because it is not a GFlowError, so the operator is shown "Unexpected
         # error" with even the URL destroyed. Worse than the drift report #756 is about.
-        raise_if_known_landing(page, requested="the Flow editor", at="labs.locate_prompt_box")
+        await raise_if_known_landing(page, requested="the Flow editor", at="labs.locate_prompt_box")
 
         shot_path = await _capture_debug_screenshot(page, out_dir, "debug_prompt_not_found.png")
         msg = f"Prompt input not found in Flow UI. URL: {page.url}.{screenshot_clause(shot_path)}"

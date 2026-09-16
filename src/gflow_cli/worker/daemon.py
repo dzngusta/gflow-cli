@@ -190,7 +190,10 @@ class FlowWorker:
                         # with the task parameters derived from get_settings().
                         settings=settings,
                     ) as client:
-                        project_title = task.payload.get("project_title", "gflow-cli images")
+                        # `project_name` is the key both producers write (mcp/tools.py and
+                        # the CLI); this read was `project_title`, which nothing has ever
+                        # written, so every agent-supplied name was silently dropped (#628).
+                        project_title = task.payload.get("project_name", "gflow-cli images")
                         project_created = False
                         if project_id:
                             project_flow_id = project_id

@@ -45,6 +45,17 @@ with a logged justification (§ 5 step 8).
    ```
    - **Any non-zero → record a `D0 — CI-mechanical` RED.** This is a hard blocker regardless of the LLM dimensions' verdicts; surface the failing command + output verbatim in the report and do NOT call the PR merge-ready. (Mirrors the SonarCloud-gate rule in the wrapper: the council must not bless a tree CI will reject.)
    - If running the gate is impractical (no `uv`, worktree add fails), fall back to `gh pr checks <N>` and inspect the `test` job's Lint/Format steps; if they are **pending or failing**, flag D0 as `UNVERIFIED — must be confirmed green before merge`, never as GREEN.
+   - **On a fork PR, `gh pr checks` is not sufficient and the fallback above is blind.**
+     GitHub holds `pull_request` workflows from forks at `conclusion=action_required`
+     until a maintainer clicks *Approve and run*, and such a run **does not appear in
+     `statusCheckRollup` at all** — so the PR reports every check green while nothing
+     ran. Measured on 2026-09-15: #781 (approved) showed 16 checks; #793 (held) and
+     #787 (no run) each showed 2, all green. Run:
+     ```bash
+     uv run python scripts/ci/check_fork_pr_ci.py --pr <N>
+     ```
+     Non-zero → D0 is `RED — CI never ran`. Approve the workflow run, or gate the head
+     locally, before trusting any green on that PR.
    - Unlike steps 1–5, a D0 failure does **not** halt — dispatch the LLM council anyway so its findings are gathered in one pass, then fold D0 into the Phase 5 verdict.
 
 ---

@@ -74,8 +74,8 @@ If you can help unblock a pure HTTP transport (especially for video generation, 
 
 Run these gates in order before every commit:
 
-```powershell
-$env:PYTHONUTF8=1
+```bash
+export PYTHONUTF8=1          # Windows PowerShell: $env:PYTHONUTF8 = "1"
 uv run python scripts/ci/check_repo_hygiene.py
 uv run python scripts/ci/check_doc_links.py
 uv run python scripts/ci/check_website_docs_pii.py
@@ -108,7 +108,7 @@ the five other mirror axes), which no command here can check and no CI gate can 
 
 - Type hints everywhere; `pyright` strict on `src/gflow_cli`.
 - Structured logging only (`structlog`) — **never** raw `print()` or `import logging` in `src/`.
-- Errors as RFC 9457 Problem Details with stable per-class exit codes (3–38, e.g. 11 is `ConfigurationError` — including `ProfileLockedError` for same-profile lease contention, 16 is the `DataStoreError` family, 19 `SceneConcatError`, 20 `FrameExtractionError`, 21 `ChainPartialError`, 22 `UpscaleUnavailableError`, 25 `FlowAgentUiError`, 28 `UiModeUnavailableError`, 29 `MentionIndexUnavailableError`, 30 `QueueSchemaError`, 37 `InsufficientCreditsError`). See `src/gflow_cli/errors.py::EXIT_CODE_MAP` for the complete mapping. Exit 33 is reserved outside that map: `gflow doctor` findings-present — a successful diagnosis, not an error class.
+- Errors as RFC 9457 Problem Details with stable per-class exit codes (3–39, e.g. 11 is `ConfigurationError` — including `ProfileLockedError` for same-profile lease contention, 16 is the `DataStoreError` family, 19 `SceneConcatError`, 20 `FrameExtractionError`, 21 `ChainPartialError`, 22 `UpscaleUnavailableError`, 25 `FlowAgentUiError`, 28 `UiModeUnavailableError`, 29 `MentionIndexUnavailableError`, 30 `QueueSchemaError`, 37 `InsufficientCreditsError`, 39 `FlowAccessUnavailableError`). See `src/gflow_cli/errors.py::EXIT_CODE_MAP` for the complete mapping. Exit 33 is reserved outside that map: `gflow doctor` findings-present — a successful diagnosis, not an error class.
 - 100-char line length, `ruff` configured. Imports sorted by `ruff` (isort rules).
 - **YAGNI / least-code**: prefer the smallest change that works. No speculative abstractions (interface/factory with one implementation), no config or flags nobody sets, no dead constants/helpers, no reinventing the stdlib. Review carries this as its own lens — the **D14 over-engineering** dimension of [`pr-council-review`](skills/pr-council-review/SKILL.md) (baseline, always runs). Its rubric is portable; the `ponytail` plugin (see CONTRIBUTING) is an optional accelerant, not a dependency.
 - **MCP & CLI Schema Symmetry**: Any updates or additions to user-facing CLI command parameters (e.g., `gflow image t2i`, `gflow video`) must be mirrored in the corresponding MCP tool definitions. Never add option/argument fields to Click commands without updating the MCP server implementation. This symmetry is enforced programmatically in CI via `tests/mcp/test_cli_parity.py` (every CLI leaf command needs a mapped MCP tool or an explicit, reasoned exemption) plus the schema checks in `tests/mcp/test_server.py`.
@@ -339,7 +339,7 @@ content in a vendor directory.
 **Codex CLI / desktop app:** install the repo's skills-only plugin from the repository root,
 then start a new session:
 
-```powershell
+```bash
 codex plugin marketplace add .
 codex plugin add gflow@gflow-cli
 ```

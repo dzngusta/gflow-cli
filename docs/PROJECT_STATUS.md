@@ -4,6 +4,46 @@
 
 ## Current release
 
+**v0.76.0 — alpha.** **Three surfaces stop lying to you, and the last unshipped distribution
+channel starts publishing itself.**
+
+**An account with no Flow access is told so.** It previously got `UiSelectorDriftError` (exit 23)
+— gflow reporting that its own selectors had drifted and inviting a bug report — when the real
+answer was that Google had never granted the account Flow. That now routes to its own
+`FlowAccessUnavailableError` (**exit 39**), read from the rendered `flow-pinhole-unavailable-screen`
+rather than from a URL path or a status code, because on this host the hop to that screen is
+decided client-side and the response body looks the same either way (#833).
+
+**The containerised sign-in works on Windows, and no longer points at a service that does not
+exist.** `docker-compose.yml` hard-coded the X11 socket at `/tmp/.X11-unix` and told non-Linux
+users to "use the VNC service below" — there is no VNC service. On Windows 11 + WSL2 the display
+is real but lives at `/mnt/wslg/.X11-unix`, so the default mounted nothing and Chrome exited
+against a display that was not there. The image also hardcoded its own version with nothing tying
+it to `pyproject.toml`; that is now an `ARG` with a gate that also pins its **position**, since
+declaring it above the Chrome layer would invalidate ~1.6 GB of apt cache on every bump.
+
+**An MCP agent's `project_name` is finally used.** `gflow_generate_image` and
+`gflow_generate_video` accepted it and documented it as the title for a new Flow project, but the
+worker read a different key that nothing in the repository has ever written — every supplied name
+was silently dropped. A new AST gate extracts the keys MCP writes and the keys the worker reads
+and fails on any write nothing consumes; it found this one on its first run (#628).
+
+**The Official MCP Registry publishes itself on every release**, via OIDC — no personal access
+token is created, stored or handed to a third party, and the publisher binary is pinned by version
+*and* sha256 because that job holds a write scope while publishing publicly. It was the last
+unshipped channel and the one that feeds the others. mcpservers.org also approved the listing.
+
+**Not fixed here:** migrated login (#791) — a fix was built, reviewed and **withdrawn**, because
+the signal it read turned out to be decided client-side and would have locked out authenticated
+users in the `/about` state (see PR [#835](https://github.com/ffroliva/gflow-cli/pull/835) § Q6 — the spike is on that
+branch, which was not merged). Also unfixed: `gflow credits` on migrated accounts (#795), and the agent-only composer
+driver (#799, #824 open).
+
+See [LIVE_VERIFICATION_v0.76.0.md](LIVE_VERIFICATION_v0.76.0.md).
+
+<details><summary>v0.75.0 — gflow becomes something you install rather than something you clone</summary>
+
+
 **v0.75.0 — alpha.** **gflow becomes something you install rather than something you clone —
 and `gflow serve` starts checking the token it always asked you to set.**
 
@@ -47,6 +87,9 @@ why. The word "unofficial" is gone as a *label*; the substance is unchanged and 
 agent-only composer, which still has no driver.
 
 See [LIVE_VERIFICATION_v0.75.0.md](LIVE_VERIFICATION_v0.75.0.md).
+
+
+</details>
 
 <details><summary>v0.74.0 — the migrated driver stops tripping over its own uploads</summary>
 
@@ -1154,6 +1197,7 @@ reporter-verified e2e on macOS).
 
 | Milestone | Status |
 |---|---|
+| An account with no Flow access is told so instead of being shown a selector-drift error and asked to file a bug — exit 39, read from the rendered unavailable screen rather than a URL or a status code (#833); the containerised sign-in works on Windows and pins its own version (#830); an MCP agent's `project_name` is finally consumed, found by a new AST gate on the MCP→worker payload keys (#628); the Official MCP Registry publishes itself on release via OIDC (#829) | ✅ done (v0.76.0) |
 | Every local file the migrated driver uploads is run-unique, so a re-run stops binding a stale look-alike, and the Frames picker is confirmed when it does not commit on the pick — covering `video i2v`, `video r2v` and `image i2i` alike (#792); `gflow credits` stops sending migrated accounts into a re-login loop at the raise site they actually hit (#795); an agent-only `flow.google.com` composer exits 25 `retryable: false` instead of 23 (#799) | ✅ done (v0.74.0) |
 | Four error paths stop lying about what went wrong: a click that never lands reports the actionability condition that failed instead of a bare timeout (#776), a known Flow landing is named rather than blamed on the selector (#756), Google's auth URLs are stripped from error messages (#777), and the post-migration account chooser auto-selects instead of stalling (#763/#764) | ✅ done (v0.73.0) |
 | Google's `glue` consent bar no longer blocks the migrated composer: it is cleared before the driver's first click, rejecting rather than accepting, and a bar that will not go is named as `div.glue-cookie-notification-bar` instead of `span` (#780) | ✅ done (v0.73.1) |

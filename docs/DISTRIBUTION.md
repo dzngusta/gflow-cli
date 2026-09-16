@@ -24,15 +24,15 @@ channel no longer accepts anything).
 | Channel | Audience | Submit via | Status | Last verified |
 |---|---|---|---|---|
 | [PyPI](https://pypi.org/project/gflow-cli/) | Python users, every downstream scraper | `uv publish` (release) | listed | 2026-09-14 |
-| [Official MCP Registry](https://registry.modelcontextprotocol.io) | Agent devs; feeds other registries | `mcp-publisher` CLI | **ready — submit once v0.75.0 is on PyPI** | 2026-09-15 |
-| [Glama](https://glama.ai/mcp) | Broad MCP audience (87k servers) | Web form | **submitted** | 2026-09-15 |
+| [Official MCP Registry](https://registry.modelcontextprotocol.io) | Agent devs; feeds other registries | `mcp-publisher`, automated on release (#829) | **automated — first run is v0.76.0's own release job** | 2026-09-16 |
+| [Glama](https://glama.ai/mcp/servers/ffroliva/gflow-cli) | Broad MCP audience (87k servers) | Web form | **listed** · claimed · rated **A** · release **0.75.0** published · Auto-Release on | 2026-09-15 |
 | [MCP Market](https://mcpmarket.com/server/gflow-cli) | Consumer discovery | — (crawled us) | **listed** | 2026-09-14 |
 | [skills.sh](https://skills.sh/ffroliva/gflow-cli) | Cross-agent skill users | — (telemetry) | **listed** | 2026-09-14 |
-| [punkpeye/awesome-mcp-servers](https://github.com/punkpeye/awesome-mcp-servers) | The MCP list (95k★) | PR | **submitted** ([#14423](https://github.com/punkpeye/awesome-mcp-servers/pull/14423)) | 2026-09-15 |
+| [punkpeye/awesome-mcp-servers](https://github.com/punkpeye/awesome-mcp-servers) | The MCP list (95k★) | PR | **submitted** ([#14423](https://github.com/punkpeye/awesome-mcp-servers/pull/14423)) · Glama gate met, awaiting review | 2026-09-15 |
 | [hesreallyhim/awesome-claude-code](https://github.com/hesreallyhim/awesome-claude-code) | Claude Code (54k★) | Issue | **submitted** ([#2844](https://github.com/hesreallyhim/awesome-claude-code/issues/2844)) | 2026-09-15 |
-| [ComposioHQ/awesome-claude-skills](https://github.com/ComposioHQ/awesome-claude-skills) | Claude skills (75k★) | PR | **submitted** ([#1905](https://github.com/ComposioHQ/awesome-claude-skills/pull/1905)) | 2026-09-15 |
+| [ComposioHQ/awesome-claude-skills](https://github.com/ComposioHQ/awesome-claude-skills) | Claude skills (75k★) | PR | **submitted** ([#1905](https://github.com/ComposioHQ/awesome-claude-skills/pull/1905)) · `ready-to-merge`, awaiting review | 2026-09-15 |
 | [travisvn/awesome-claude-skills](https://github.com/travisvn/awesome-claude-skills) | Claude skills (15k★) | PR | **submitted** ([#1244](https://github.com/travisvn/awesome-claude-skills/pull/1244)) | 2026-09-15 |
-| [mcpservers.org](https://mcpservers.org/submit) | MCP discovery | Web form (no PRs) | **submitted** | 2026-09-15 |
+| [mcpservers.org](https://mcpservers.org/servers/ffroliva/gflow-cli) | MCP discovery | Web form (no PRs) | **listed** · approved 2026-09-15 · badge in README | 2026-09-16 |
 | [cursor.directory](https://cursor.directory/plugins/gflow-cli) | Cursor users | Web form | **listed** | 2026-09-15 |
 | [appcypher/awesome-mcp-servers](https://github.com/appcypher/awesome-mcp-servers) | MCP (5.8k★) | — | **closed** (archived) | 2026-09-15 |
 | Claude Code plugin marketplace (ours) | Claude Code users | — (self-hosted) | shipped | 2026-09-14 |
@@ -59,14 +59,18 @@ thing, and it is not a distribution task.
    GitHub's gallery is built on it). **v0.75.0 is the release that unblocks it**, and this document
    ships in it: PyPI metadata is frozen per release, so the rewritten summary, the three sidebar
    links and the ten classifiers take effect on that upload, and `mcp-publisher` can only verify
-   ownership once the `mcp-name:` token is in the *published* README. The moment the wheel is live:
+   ownership once the `mcp-name:` token is in the *published* README.
 
-   ```
-   mcp-publisher init && mcp-publisher login github && mcp-publisher publish
-   ```
-2. **Build the Glama Dockerfile** — it unblocks two rows at once, because punkpeye now requires a
-   Glama listing and badge (see below). The bar is only "start and answer introspection", which
-   needs no browser and no Google session.
+   **This is now automated.** `.github/workflows/mcp-registry.yml` runs on `release: published`,
+   which fires after `release.yml` has uploaded the wheel, and authenticates with GitHub Actions
+   OIDC — no PAT, no device-code flow, no human step. It becomes live once it reaches the default
+   branch at the next release; `v0.75.0` itself therefore still needed either one manual publish or
+   the arrival of `v0.76.0`.
+2. **Check Glama after the next release.** The Dockerfile is built and 0.75.0 is released, which
+   met punkpeye's Glama gate. Auto-Release is meant to publish each GitHub release by itself, but
+   it has never fired for us yet, and an unpinned build has already used a commit hours out of
+   date (see below). After the next `/gflow:release`, open Glama → Admin → Releases and confirm
+   the new build's `cli_version` matches the tag.
 3. **Watch the open submissions.** Seven are awaiting a response — the six rows marked
    `submitted`, plus the Arnon-hs licence issue. cursor.directory is the one that already went
    live. Nothing to do but check back.
@@ -126,15 +130,26 @@ Use `uvx --from gflow-cli <EXECUTABLE-NAME>` instead.
 so `uvx gflow-cli mcp run` works — which is also what a user types first, the package being what they
 just installed.
 
-Publish sequence (needs the next release on PyPI first, so the token is in the published README):
+Publishing runs in CI: `.github/workflows/mcp-registry.yml`, on `release: published` (plus
+`workflow_dispatch` for a re-run). It authenticates with **GitHub Actions OIDC**, so no personal
+access token is ever created or handed to the registry, and the `mcp-publisher` download is pinned
+by version *and* sha256 because that job holds `id-token: write`.
+
+The equivalent by hand, if you ever need it locally:
 
 ```
-mcp-publisher init
-mcp-publisher login github     # namespace becomes io.github.ffroliva/*
+mcp-publisher validate         # NOT `init` - see below
+mcp-publisher login github     # device-code flow; namespace becomes io.github.ffroliva/*
 mcp-publisher publish
 ```
 
-### Glama — `submitted` 2026-09-14
+`init` only writes a *template* `server.json`. This repo already has a real one, committed and
+version-locked by `tests/test_server_json.py`, so `init` refuses it with `Error: server.json
+already exists` **and exits 1** - which would abort the one-liner above at its first command.
+`validate` is the right first step: it checks the existing file against the live registry and
+leaves it untouched. Measured with `mcp-publisher 1.8.1` on 2026-09-15.
+
+### Glama — `listed` 2026-09-14, `released` 2026-09-15
 
 *"On the servers page, click Add MCP Server and fill in: the GitHub repository URL, a display name
 and short description."* Automated licence, security and health checks; most submissions index
@@ -148,13 +163,54 @@ the form returned **"Your server has been submitted for review."** Approval is f
 email asking for a **Dockerfile**, and **only servers that pass its automated checks are indexed
 for search**.
 
+**Approved and listed the same day, then claimed.** The "Dockerfile" is not a file you paste —
+Glama generates one from a **config form** on the server's admin page and clones the repo at the
+default branch's head, so it never touches PyPI. Two builds failed with
+`could not start the proxy Error: spawn gflow ENOENT`: `uv sync` installs console scripts into
+`/app/.venv/bin`, which is never on `PATH`. With the absolute path the build passed in **31.2 s**,
+answering `initialize` and `tools/list` with 15 tools, no browser and no credentials. The spec is
+tracked as [`glama.json`](../glama.json) and guarded by `tests/test_glama_build_spec.py`; the
+container's capabilities and limits are in [CONTAINER.md](CONTAINER.md).
+
+Two numbers on that page are easy to confuse: the admin panel's percentage is internal profile
+completeness (17% → 42% here), while the **public badge is a letter grade** — currently **A** —
+and the badge is what `awesome-mcp-servers` asks for. Claiming required a **GitHub OAuth grant**
+even though the account was created with Google; admin pages and build tests work unclaimed.
+
 **That bar is lower than it looks, and the correction matters.** The first read of this was that a
 container cannot exercise a logged-in Chrome profile, so the listing would exist but stay
 unindexed. Glama's own bot says otherwise, on punkpeye PR #14423: *"we only need the server to
 start and respond to introspection requests."* Tool introspection is static — `gflow mcp run`
-answers `tools/list` with no browser, no profile and no Google session. So a minimal
-`pip install gflow-cli` + `gflow mcp run` image should pass. Not yet built, and **UNVERIFIED**
-until it is, but it is a small task rather than an architectural blocker.
+answers `tools/list` with no browser, no profile and no Google session. The build above confirmed
+it.
+
+**Released 2026-09-15, and set to release automatically.** A passing build test is not yet
+something Glama runs: its admin page asks you to create a **release** from a successful build.
+`0.75.0` was released from build test `01a0a526-1013-7318-a171-937f48fb9a1a`, whose server logged
+`cli_version 0.75.0`. The Releases page also has an **Auto-Release** switch ("builds and publishes
+a new version on every GitHub release"). It is on, and the release uses the GitHub release notes
+as its changelog, overwriting any text typed into the form.
+
+Four observations, so nobody has to find them again:
+
+- **There is no write API and no CLI.** Glama's [OpenAPI spec](https://glama.ai/api/mcp/openapi.json)
+  has only read endpoints plus usage telemetry. Anything not covered by Auto-Release is done by hand
+  in the admin pages.
+- **Glama's copy of the repo can lag hours behind GitHub.** A build test at 12:50 UTC, with no pinned
+  commit, checked out `cf1bb09` and reported `0.74.0`, although `develop` had moved on hours
+  earlier. *Repository → Sync Server* brought Glama up to date. Glama's
+  [methodology page](https://glama.ai/mcp/methodology) says syncs happen "within minutes of a
+  push"; that is not what happened here.
+- **The pinned-commit field only accepts commits Glama has synced.** Pinning the `v0.75.0` tag
+  commit (`8689b8e`) failed with *"Commit not found"*, even after a sync, although it is on
+  `develop`. The pin is left **empty**, so it cannot hold Auto-Release on one old commit, which
+  keeps `glama.json`'s `"pinnedCommit": null` accurate.
+- **Auto-Release has not fired yet.** The GitHub release `v0.75.0` was published at 08:24 UTC and
+  Glama ran no build around then, possibly because the listing had no release until later that
+  day. So nobody has seen whether it builds the tag or a synced branch head. `release.yml`
+  publishes the GitHub release when the tag is pushed, before the release's step-15 merge into
+  `develop`, so a branch-head build would report the previous version. **UNVERIFIED** until the
+  next release.
 
 ### Glama is a dependency of the biggest awesome-list
 
@@ -208,7 +264,11 @@ Free win: add the badge and the `npx skills add ffroliva/gflow-cli` line to the 
   returned 404. Read-only repositories fail late and confusingly, so the lesson is the general
   one: check `archived` before planning a contribution, not after.
 - **mcpservers.org** (via wong2's list). **PRs are explicitly refused**; the web form at
-  `mcpservers.org/submit` is the only door.
+  `mcpservers.org/submit` is the only door. **Approved 2026-09-15**, live at
+  [`/servers/ffroliva/gflow-cli`](https://mcpservers.org/servers/ffroliva/gflow-cli); the
+  approval mail supplies a README badge, which is now in the badge block. Their follow-up
+  pitches a paid sponsorship for placement on the site and in `awesome-mcp-servers` — the
+  free listing is what we took, and the badge does not depend on it.
 
 Two Claude-skills lists were added after the first pass and submitted the same day:
 

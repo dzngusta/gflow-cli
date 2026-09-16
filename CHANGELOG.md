@@ -7,6 +7,106 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.76.0] — 2026-09-16
+
+### Fixed
+
+- **The containerised sign-in now works on Windows, and no longer points at a service that
+  does not exist.** `docker/docker-compose.yml` hard-coded the X11 socket at
+  `/tmp/.X11-unix` and told non-Linux users to "use the VNC service below instead" — there
+  is no VNC service; the file defines `login`, `gflow` and `serve`. On Windows 11 + WSL2 the
+  display is real but lives elsewhere: WSLg publishes a live `X0` socket at
+  `/mnt/wslg/.X11-unix` with `DISPLAY=:0`, while `/tmp/.X11-unix` inside that distro is an
+  empty directory, so the default mounted nothing and Chrome exited against a display that
+  was not there. The mount is now `${X11_SOCKET:-/tmp/.X11-unix}`, unchanged for Linux, and
+  `docker/README.md` documents the WSL invocation plus the two prerequisites that actually
+  bite (run it from inside WSL, and enable Docker's WSL integration for that distro).
+- **The container image no longer silently installs a stale gflow.** `docker/Dockerfile`
+  hardcoded `pip install gflow-cli==0.75.0` with nothing tying it to `pyproject.toml`, so
+  the next release would have left the image on the old version while
+  `docker/README.md`'s verification table went on quoting the new one. The version is now
+  an `ARG` gated by `tests/test_dockerfile_version_pin.py`. That gate also asserts the
+  ARG's **position**: declared above the Chrome layer it would invalidate ~1.6 GB of apt
+  cache on every version bump, so the ordering is a cache contract, not style. The base
+  image is now tracked by Dependabot (`docker` ecosystem); Chrome stays unpinned, with the
+  reason and the refresh command written down rather than left implicit.
+- **An account with no Flow access was told gflow's selectors had drifted, and asked to
+  file a frontend bug.** Google Flow needs an age-verified account in a supported region
+  on a Google AI Plus, Pro or Ultra plan (or a qualifying Workspace plan). An account
+  without one is served Flow's own "you don't have access" screen instead of the app, and
+  gflow had no route for that state, so the editor sweep reported the only thing it could
+  see: the settings trigger never appeared. Measured on a newly created free Google
+  account, 2026-09-15, as an **A/B through the same command** — the probe neutered, then
+  restored, on live Flow:
+
+  | | exit | class | what the user is told |
+  |---|---|---|---|
+  | before | 23 | `UiSelectorDriftError` | *"Google may have updated their frontend … file a bug at github.com/ffroliva/gflow-cli/issues"* — on `https://flow.google.com/unavailable`, after a 30 s wait, **with an incident bundle containing a screenshot of the account's own page** for the user to attach |
+  | after | 39 | `FlowAccessUnavailableError` | *"This Google account cannot reach Flow"*, naming the subscription and linking Google's eligibility page |
+
+  The guard goes in `raise_if_known_landing()`, already the single chokepoint for "we
+  landed somewhere unexpected" and shared by all three raise sites (the labs gallery
+  sweep, the labs prompt-box sweep, and the migrated composer's `ensure_editor`), so every
+  command that drives the Flow editor is covered by the one change. It now probes the DOM
+  before it reads the URL. Verified live at $0 on that account: `ui_driver.known_landing
+  kind=unavailable at=migrated.ensure_editor`, exit 39, nothing submitted.
+
+  Detection is by Angular component, not by path or status code, because the spike
+  ([`2026-09-15-unentitled-account-signal`](docs/superpowers/spikes/2026-09-15-unentitled-account-signal.md))
+  pre-registered four candidate signals and refuted all four. There is no entitlement field
+  on the session wire; `flow.google.com/` answers **HTTP 200** and performs the hop
+  client-side, so there is no 3xx to key on; and the path is not stable — `/unavailable`
+  and `/u/8/unavailable` were both observed, the second carrying Google's account-index
+  segment, which gflow does not parse anywhere. What is stable is Flow's own
+  `<flow-pinhole-unavailable-screen>`, rendered inside `aisandbox-root`, and unlike the
+  screen's prose it is locale-invariant by construction (AGENTS.md Tier 1). The probe is
+  total: a page that cannot be queried, or a locator that raises, reports "not seen" rather
+  than displacing the caller's own diagnosis.
+
+  **What this does not fix, and why — measured, not assumed.** The same account run
+  *without* `--project` never reaches the editor at all: it takes the labs REST arm and
+  dies at `labs.google/fx/api/trpc/project.createProject` with **HTTP 401**, which is still
+  reported as `AuthExpiredError` (exit 3) telling the user to log in again. `gflow auth
+  login` (exit 8) and `gflow auth status` (exit 1) are wrong in the same way. All three read
+  an oracle that cannot answer the question: `labs.google/fx/api/auth/session` returns 200
+  with an empty `user` for an abandoned sign-in *and* for an account with no entitlement,
+  and a REST 401 looks identical to an expired session. The discriminator exists only in
+  the DOM, and on the login path Chrome has already closed by the time the verdict runs, so
+  there is no page left to ask. Routing those means a browser probe on the auth path — a
+  separate change, on a surface `AGENTS.md` gates behind its own spike. (`gflow credits
+  user` exit 3 on that account is [#795](https://github.com/ffroliva/gflow-cli/issues/795),
+  a different real bug. `gflow project list` returning `{"projects": [], "total": 0}` was
+  never wrong — it lists the local SQLite catalog and never contacts Flow.)
+
+- **An MCP agent's `project_name` is finally used.** `gflow_generate_image` and
+  `gflow_generate_video` accept a `project_name` and document it as the title for a freshly
+  created Flow project, but the worker read a different key (`project_title`) that nothing in
+  the repository has ever written. Every supplied name was silently dropped and each new
+  project was created as the hardcoded fallback `gflow-cli images` instead. Dead since the
+  parameter shipped on 2026-07-26 — the daemon's read predated it by four days, and the
+  feature wired up a new key rather than the one already being read. The CLI was unaffected.
+
+### Added
+
+- **The Official MCP Registry listing now publishes itself.** A new `MCP Registry` workflow runs
+  on `release: published` — after `release.yml` has uploaded the wheel, which matters because
+  `mcp-publisher` proves namespace ownership by reading the `mcp-name:` token out of the
+  *published* PyPI README. It authenticates with **GitHub Actions OIDC**, so no personal access
+  token is created, stored or handed to the registry, and the `mcp-publisher` download is pinned
+  by version *and* sha256 since that job holds `id-token: write`. `workflow_dispatch` is there
+  for a re-run when a release's PyPI upload succeeded but the registry publish did not. Registry
+  listings feed the downstream directories: PulseMCP ingests it and GitHub's MCP gallery is built
+  on it.
+- **A gate for the MCP→worker payload-key round trip (#628).** `tests/mcp/test_cli_parity.py`
+  checks parity at the command and option level; neither can see the queue payload, where a
+  key written under one name and read under another type-checks, lints, passes every test and
+  does nothing at runtime. The new `tests/mcp/test_payload_key_round_trip.py` extracts the keys
+  `mcp/tools.py` writes and the keys anything under `worker/` reads, and fails on any written
+  key the worker never reads. It found the `project_name` defect above on its first run. The
+  extractors carry their own tests against synthetic sources, so the gate is proven able to go
+  red rather than merely observed green (precedent: a dead `output` param the queue never read,
+  found by hand in a v0.48.0 pre-release audit, #495).
+
 ## [0.75.0] — 2026-09-15
 
 ### Added
@@ -5101,7 +5201,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.75.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.76.0...HEAD
+[0.76.0]: https://github.com/ffroliva/gflow-cli/compare/v0.75.0...v0.76.0
 [0.75.0]: https://github.com/ffroliva/gflow-cli/compare/v0.74.0...v0.75.0
 [0.74.0]: https://github.com/ffroliva/gflow-cli/compare/v0.73.2...v0.74.0
 [0.73.2]: https://github.com/ffroliva/gflow-cli/compare/v0.73.1...v0.73.2

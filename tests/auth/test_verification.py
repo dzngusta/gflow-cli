@@ -847,6 +847,11 @@ class TestFindEmails:
                 ["edge@x.io", "other_one@y-z.com", "third@a.b.cd"],
             ),
             ("no addresses here at all", []),
+            # Matches never overlap: the local part of the second address may
+            # not reach back into the first. Found by fuzzing this against the
+            # pattern it replaces — 2 differences in 4 000 random bodies, all of
+            # this shape, two `@` within the 64-character window.
+            ("a@b.co7-x+y@d.com", ["a@b.co", "7-x+y@d.com"]),
             # An `@` with nothing usable on either side yields nothing, not a crash.
             ("@", []),
             ("@example.com", []),

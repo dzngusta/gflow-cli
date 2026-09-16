@@ -3,25 +3,24 @@ name: MCP Registry
 # Publishes server.json to the Official MCP Registry — the listing that feeds the
 # downstream directories (PulseMCP ingests it; GitHub's MCP gallery is built on it).
 #
-# Ordering matters. `mcp-publisher` proves namespace ownership by reading the
-# `mcp-name:` token out of the PUBLISHED PyPI README, and PyPI metadata is frozen
-# per release — so the wheel has to be up first. `release.yml` calls this workflow
-# with `needs: build-and-publish`, which is what guarantees that.
+# Ordering matters, and it is `release.yml`'s STEP ORDER that guarantees it — not any
+# `needs:`/`workflow_call` wiring, of which there is none. `mcp-publisher` proves
+# namespace ownership by reading the `mcp-name:` token out of the PUBLISHED PyPI
+# README, and PyPI metadata is frozen per release, so the wheel must be up first.
+# `release.yml` runs "Publish to PyPI" and only then "Create GitHub Release", and
+# this fires on that Release.
 #
-# This hung off `release: published` and never fired once, because `release.yml`
-# created the Release with the default GITHUB_TOKEN and GitHub starts no workflow
-# runs from GITHUB_TOKEN-created events. The trigger was structurally dead rather
-# than mistimed, so it would not have started working at the next release either
-# (#841). The fix is in release.yml: the Release is now created with RELEASE_PAT,
-# a user-owned token, so the event counts as user-created and this runs.
+# It never fired before #841: `release.yml` created the Release with the default
+# GITHUB_TOKEN, and GitHub starts no workflow runs from GITHUB_TOKEN-created events.
+# Structurally dead rather than mistimed — it would not have started working at the
+# next release. The Release is now created with RELEASE_PAT, so the event is
+# user-created and this runs. A `release` event checks out the TAG
+# (GITHUB_REF = refs/tags/<tag_name>), so server.json here is the released one.
 #
-# That token expires (fine-grained PATs cap at 366 days) and its expiry looks
-# exactly like #841 did — Release created, zero runs here, no error anywhere. A
-# stale registry listing means: check RELEASE_PAT's expiry before anything else.
-#
-# Auth is GitHub Actions OIDC. There is no PAT and no device-code flow: the runner
-# exchanges its own short-lived identity token for registry credentials, which is
-# why this needs `id-token: write` and nothing else.
+# Registry auth is GitHub Actions OIDC: the runner exchanges its own short-lived
+# identity token for registry credentials, which is why this needs `id-token: write`
+# and nothing else. **No token is ever handed to the registry** — RELEASE_PAT lives
+# in release.yml and only creates the Release.
 
 on:
   release:
@@ -46,6 +45,11 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # `published` fires for pre-releases too — GitHub's own docs say so explicitly, and
+    # release.yml marks any a/b/rc/`-` tag as one. Without this filter a v1.2.3rc1 would
+    # become the registry's ACTIVE listing, which is what PulseMCP and GitHub's MCP
+    # gallery ingest. A dispatch has no release payload, so the guard is release-only.
+    if: ${{ github.event_name != 'release' || !github.event.release.prerelease }}
     permissions:
       contents: read
       id-token: write # OIDC exchange with registry.modelcontextprotocol.io
@@ -61,24 +65,37 @@ jobs:
           persist-credentials: false
 
       - name: server.json must carry the version being published
-        # The repo-side agreement (pyproject == __init__ == plugin.json == uv.lock
-        # == server.json) is already a merge gate in check_repo_hygiene.py, so the
-        # only way these disagree is publishing from the WRONG REF. That is exactly
-        # the failure this catches.
+        # The repo-side agreement (pyproject == __init__ == plugin.json == uv.lock ==
+        # server.json) is already a merge gate in check_repo_hygiene.py, so the only way
+        # these disagree is publishing from the WRONG REF — which is exactly what
+        # happened on v0.76.0 (#841) and what this catches.
+        #
+        # Both arms read `github.event.*`, which exists on every trigger. The bare
+        # `inputs` context is documented for workflow_dispatch/workflow_call but not for
+        # a release event, and this path cannot be rehearsed, so it is not relied on.
         env:
-          # A release event carries the tag; a dispatch carries the typed input.
-          EXPECTED_VERSION: ${{ inputs.version || github.event.release.tag_name }}
+          EXPECTED_VERSION: ${{ github.event.inputs.version || github.event.release.tag_name }}
         run: |
           set -euo pipefail
           expected="${EXPECTED_VERSION#v}"
+          if [ -z "${expected}" ]; then
+            echo "::error::No version to check against (neither a dispatch input nor a release tag). Refusing to publish."
+            exit 1
+          fi
+          # Checked explicitly: a missing file would otherwise abort on jq's own error
+          # and lose the diagnostic below, which is the part an operator needs.
+          if [ ! -f server.json ]; then
+            echo "::error::server.json is absent on this ref — nothing to publish."
+            exit 1
+          fi
           declared=$(jq -r '.version' server.json)
-          packaged=$(jq -r '.packages[0].version' server.json)
-          if [ "$declared" != "$expected" ] || [ "$packaged" != "$expected" ]; then
-            echo "::error::Publishing ${expected}, but server.json on this ref declares ${declared} (package ${packaged})."
+          packaged=$(jq -r '[.packages[]?.version] | join(", ")' server.json)
+          if ! jq -e --arg v "${expected}" '.version == $v and all(.packages[]?.version; . == $v)' server.json >/dev/null; then
+            echo "::error::Publishing ${expected}, but server.json on this ref declares ${declared} (packages: ${packaged})."
             echo "::error::A dispatch publishes whatever the REF carries. Dispatch the release tag, or wait for the back-merge to land on develop (#841)."
             exit 1
           fi
-          echo "server.json declares ${declared} — matches the version being published."
+          echo "server.json declares ${declared} on every version site — matches the version being published."
 
       - name: Install mcp-publisher
         env:

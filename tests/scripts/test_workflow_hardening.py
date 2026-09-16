@@ -201,3 +201,79 @@ def test_release_does_not_restore_a_shared_uv_cache() -> None:
                 "release.yml: setup-uv must set 'enable-cache: false' — the publishing "
                 "workflow must not restore a cache another workflow can write"
             )
+
+
+# --- The MCP Registry publish trigger (#841) ------------------------------------
+#
+# These three lock the shape of a bug that ran for every release that shipped with
+# the automation and was caught by nobody: `mcp-registry.yml` triggered on
+# `release: published`, `release.yml` created the Release with the default
+# GITHUB_TOKEN, and GitHub starts no workflow runs from GITHUB_TOKEN-created events.
+# Zero runs, ever, and every check green throughout. A guard never seen red is not a
+# guard, so each of these is written to fail against the pre-#843 file.
+
+
+def _gh_release_step() -> dict[str, Any]:
+    """release.yml's ``softprops/action-gh-release`` step."""
+    steps = [
+        step
+        for step in _steps(_load(WORKFLOWS / "release.yml"))
+        if str(step.get("uses", "")).startswith("softprops/action-gh-release@")
+    ]
+    assert len(steps) == 1, f"release.yml: expected exactly one gh-release step, found {len(steps)}"
+    return steps[0]
+
+
+def test_the_github_release_is_not_created_with_the_default_token() -> None:
+    """The Release must be created with a USER token, or no workflow run follows it.
+
+    This is the whole of #841. ``token:`` absent is the pre-#843 state and the
+    regression this exists to catch — the action then defaults to GITHUB_TOKEN and
+    the registry publish silently never runs.
+    """
+    token = str(_gh_release_step().get("with", {}).get("token", ""))
+    assert token, (
+        "release.yml: the gh-release step sets no `token:`, so it falls back to "
+        "GITHUB_TOKEN — GitHub starts no workflow runs from GITHUB_TOKEN-created "
+        "events, so `mcp-registry.yml` would never fire again (#841)"
+    )
+    assert "github.token" not in token.lower() and "secrets.github_token" not in token.lower(), (
+        f"release.yml: gh-release token is {token!r} — the default token cannot start "
+        "the `release: published` run the MCP Registry publish depends on (#841)"
+    )
+
+
+def test_the_registry_dispatch_requires_an_explicit_version() -> None:
+    """A dispatch publishes whatever ``server.json`` the REF carries.
+
+    Dispatching ``develop`` before the release back-merge landed republished the
+    PREVIOUS version to the registry, green, on v0.76.0. The required input plus the
+    in-workflow assertion is what makes that mismatch fail instead of publish.
+    """
+    doc = _load(WORKFLOWS / "mcp-registry.yml")
+    triggers = doc.get(True) or doc.get("on")  # PyYAML reads bare `on:` as True
+    version = ((triggers.get("workflow_dispatch") or {}).get("inputs") or {}).get("version")
+    assert version is not None, (
+        "mcp-registry.yml: workflow_dispatch declares no `version` input — a dispatch "
+        "would publish whatever server.json the dispatched ref happens to carry (#841)"
+    )
+    assert version.get("required") is True, (
+        "mcp-registry.yml: the `version` input must be required; an optional one is "
+        "an empty string on every hand-run dispatch (#841)"
+    )
+
+
+def test_the_registry_publish_skips_prereleases() -> None:
+    """``published`` fires for pre-releases too — GitHub documents this explicitly.
+
+    release.yml marks any ``a``/``b``/``rc``/``-`` tag as a prerelease, and the repo
+    has shipped ten of them (v0.2.0a1 … v0.6.0a6). Without this filter an ``rc``
+    becomes the registry's ACTIVE listing, which is what PulseMCP and GitHub's MCP
+    gallery ingest.
+    """
+    job = (_load(WORKFLOWS / "mcp-registry.yml").get("jobs") or {})["publish"]
+    condition = str(job.get("if", ""))
+    assert "prerelease" in condition, (
+        "mcp-registry.yml: the publish job has no prerelease guard, so a "
+        "`release: published` for an rc would publish it as the active listing"
+    )

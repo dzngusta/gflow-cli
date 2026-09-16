@@ -14,7 +14,10 @@ jobs:
   build-and-publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # for creating GitHub Releases
+      # The Release is created with RELEASE_PAT, not GITHUB_TOKEN, so nothing in this
+      # job needs contents:write any more — checkout is persist-credentials:false and
+      # PyPI uses OIDC. Least privilege: GITHUB_TOKEN gets no write grant here at all.
+      contents: read
       id-token: write # for PyPI Trusted Publishing (OIDC)
     environment:
       name: pypi
@@ -64,6 +67,22 @@ jobs:
             exit 1
           fi
 
+      - name: RELEASE_PAT must be present
+        # The one silent regression path back to #841. If the secret is deleted or
+        # renamed, `secrets.RELEASE_PAT` is the empty string; an action that falls back
+        # to its default token would then create the Release under GITHUB_TOKEN, the
+        # registry publish would never start, and every step would still be green.
+        # Fail here instead, where the reason is written down.
+        env:
+          RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RELEASE_PAT}" ]; then
+            echo "::error::RELEASE_PAT is unset or empty. A Release created with the default GITHUB_TOKEN starts no workflow runs, so the MCP Registry publish would silently not run (#841)."
+            exit 1
+          fi
+          echo "RELEASE_PAT is present."
+
       - name: Build
         run: uv build
 
@@ -82,10 +101,13 @@ jobs:
           # event count as user-created, which is what starts the registry publish.
           #
           # RELEASE_PAT is a fine-grained PAT scoped to this repo with Contents:
-          # read+write and NOTHING else. Fine-grained tokens expire (366 days max), and
-          # the failure when it does is silent and identical to #841: the Release is
-          # still created, the registry run simply never starts. If the registry listing
-          # ever goes stale again, check this token's expiry FIRST.
+          # read+write and NOTHING else. Fine-grained tokens expire (366 days max).
+          #
+          # An EXPIRED token fails loud: this step 401s and the job goes red, so no
+          # Release exists. Note it fails AFTER the PyPI upload, which has no
+          # `skip-existing` — do not re-run the workflow, create the Release by hand
+          # (`gh release create`). See RELEASE.md § If the release job fails after PyPI.
+          # A MISSING token is the silent one, which is why the step above guards it.
           token: ${{ secrets.RELEASE_PAT }}
           generate_release_notes: true
           files: dist/*

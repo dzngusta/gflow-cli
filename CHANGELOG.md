@@ -28,6 +28,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   republished `0.75.0` to the registry and the run succeeded. The dispatch now takes a
   required `version` input and asserts it against both version fields in `server.json`,
   failing the run on a mismatch instead of publishing. ([#841](https://github.com/ffroliva/gflow-cli/issues/841))
+- **A pre-release would have become the MCP Registry's *active* listing.** `release: published`
+  fires for pre-releases too — GitHub documents this explicitly — and `release.yml` marks any
+  `a`/`b`/`rc`/`-` tag as one; the repo has shipped ten (`v0.2.0a1` … `v0.6.0a6`). While the
+  trigger was dead this was latent; repairing it would have armed it. The publish job now skips
+  pre-releases. Found by council review, not in production. ([#841](https://github.com/ffroliva/gflow-cli/issues/841))
+- **A deleted or renamed `RELEASE_PAT` would have silently reproduced #841.** An *expired* token
+  fails loud (the Release step 401s), but an absent secret is an empty string, and an action
+  falling back to its default token would create the Release under `GITHUB_TOKEN` again with every
+  step green. `release.yml` now asserts the secret is non-empty **before** the build, so the run
+  fails cheaply rather than after an irreversible PyPI upload. `RELEASE.md` documents the token,
+  its 366-day expiry, and the by-hand recovery when the job fails after PyPI — the release runbook
+  previously named none of them. ([#841](https://github.com/ffroliva/gflow-cli/issues/841))
 
 ## [0.76.0] — 2026-09-16
 

@@ -63,9 +63,16 @@ thing, and it is not a distribution task.
 > ([#841](https://github.com/ffroliva/gflow-cli/issues/841)). v0.76.0 was published by hand.
 >
 > The Release is now created with `RELEASE_PAT` (a fine-grained, repo-scoped, Contents:
-> read+write token), so the event is user-created and the trigger fires. **That token expires**
-> — fine-grained PATs cap at 366 days — and its expiry reproduces #841 exactly: Release created,
-> no registry run, no error. A stale listing means *check the token's expiry first*.
+> read+write token), so the event is user-created and the trigger fires. **That token expires** —
+> fine-grained PATs cap at 366 days. Expiry fails *loud*, not like #841: `Create GitHub Release`
+> 401s and the job goes red, so no Release exists at all. It fails **after** the PyPI upload
+> though, and that step has no `skip-existing`, so recover by creating the Release by hand rather
+> than re-running the workflow (see [RELEASE.md](../RELEASE.md)). The genuinely silent case is a
+> **deleted or renamed** secret, which is why `release.yml` asserts it is non-empty before build.
+>
+> **Pre-releases are excluded.** `published` fires for them too (GitHub's own note says so), and
+> `release.yml` marks any `a`/`b`/`rc`/`-` tag as a pre-release, so `mcp-registry.yml` skips the
+> job on those — an `rc` must never become the registry's *active* listing.
 >
 > **The manual path remains, and its ordering hazard is unchanged.** `gh workflow run
 > mcp-registry.yml --ref <ref> -f version=X.Y.Z` publishes whatever `server.json` says **on that
@@ -74,7 +81,7 @@ thing, and it is not a distribution task.
 > `server.json`, so the mismatch fails the run instead of publishing green.
 
 1. **Publish to the Official MCP Registry** — the one that feeds the others (PulseMCP ingests it;
-   GitHub's gallery is built on it). **v0.75.0 is the release that unblocks it**, and this document
+   GitHub's gallery is built on it). **v0.75.0 was the release that unblocked it**, and this document
    ships in it: PyPI metadata is frozen per release, so the rewritten summary, the three sidebar
    links and the ten classifiers take effect on that upload, and `mcp-publisher` can only verify
    ownership once the `mcp-name:` token is in the *published* README.
@@ -84,8 +91,10 @@ thing, and it is not a distribution task.
    `release.yml` has uploaded the wheel, and authenticates to the registry with GitHub Actions
    OIDC — no token is ever handed to the registry. Creating the *GitHub Release* does now need a
    user-owned token (`RELEASE_PAT`), because a `GITHUB_TOKEN`-created release starts no workflow
-   runs at all. Note `release:` events run the workflow from the **default branch**, so the file
-   has to be on `develop` before any release can exercise it.
+   runs at all. A `release` event checks out the **tag** (`GITHUB_REF` = `refs/tags/<tag_name>`,
+   per GitHub's events reference — the "must exist on the default branch" rule applies to
+   `workflow_dispatch` and `gollum`, not `release`), so the publish always carries the released
+   `server.json`.
 2. **Check Glama after the next release.** The Dockerfile is built and 0.75.0 is released, which
    met punkpeye's Glama gate. Auto-Release is meant to publish each GitHub release by itself, but
    it has never fired for us yet, and an unpinned build has already used a commit hours out of
@@ -127,7 +136,7 @@ Absolutising them fixes it, but `scripts/ci/check_doc_links.py` validates relati
 disk and would stop checking them — so the fix is absolutise **plus** teach the checker to map our
 own `blob/main/` URLs back to paths. Tracked, not done here.
 
-### Official MCP Registry — submit as soon as v0.75.0 is on PyPI
+### Official MCP Registry — listed since v0.75.0, automated since #841
 
 Schema `2025-12-11`, read live. `ServerDetail` requires `name`, `description`, `version`;
 `description` is capped at **100 characters**; `name` must match `^[a-zA-Z0-9.-]+/[a-zA-Z0-9._-]+$`

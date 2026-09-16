@@ -818,3 +818,70 @@ class TestMigratedHostFallback:
 
         self._patch(monkeypatch, _migrated_mock(get_side_effect=TimeoutError("slow")))
         assert await _verify_migrated_host_fallback(tmp_path, "t") is None
+
+
+class TestFindEmails:
+    """#852 — the address scan must stay linear.
+
+    It reads a 1.28 MB `myaccount` response synchronously inside an `async def`,
+    so a stall there blocks the event loop and `CancelledError` cannot land until
+    it returns.
+    """
+
+    @pytest.mark.parametrize(
+        ("body", "expected"),
+        [
+            ("hello dev@axelate.io world", ["dev@axelate.io"]),
+            # Workspace and custom domains — the #791 regression this must not undo.
+            ("user@mycompany.com", ["user@mycompany.com"]),
+            ("user@googlemail.com", ["user@googlemail.com"]),
+            ("first.last+tag@sub.example.co.uk", ["first.last+tag@sub.example.co.uk"]),
+            # Document order preserved, duplicates kept: `Counter.most_common`
+            # upstream depends on both.
+            (
+                "<a>noreply@google.com</a> me@corp.io and me@corp.io",
+                ["noreply@google.com", "me@corp.io", "me@corp.io"],
+            ),
+            (
+                "edge@x.io,other_one@y-z.com;third@a.b.cd",
+                ["edge@x.io", "other_one@y-z.com", "third@a.b.cd"],
+            ),
+            ("no addresses here at all", []),
+            # An `@` with nothing usable on either side yields nothing, not a crash.
+            ("@", []),
+            ("@example.com", []),
+            ("trailing@", []),
+        ],
+    )
+    def test_matches_what_the_single_pattern_matched(self, body: str, expected: list[str]) -> None:
+        from gflow_cli.auth.verification import find_emails
+
+        assert find_emails(body) == expected
+
+    def test_a_long_unbroken_run_does_not_stall(self) -> None:
+        r"""The exact shape that made the old pattern quadratic.
+
+        `[\w.+-]` accepts every character of the URL-safe base64 alphabet, so a
+        Google page's blobs are precisely this. Measured on the old pattern:
+        5k->0.12s, 10k->0.48s, 20k->2.0s, 40k->12.1s — clean 4x per doubling, so
+        200k would be minutes. The bound below is ~300x the linear cost and still
+        orders of magnitude under the old curve; it fails loudly on a regression
+        without being a stopwatch race.
+        """
+        import time
+
+        from gflow_cli.auth.verification import find_emails
+
+        blob = "abcDEF012_-" * 20_000  # 220 000 chars, no `@` anywhere
+        started = time.perf_counter()
+        assert find_emails(blob) == []
+        assert time.perf_counter() - started < 1.0
+
+    def test_a_local_part_is_read_over_a_bounded_window(self) -> None:
+        """What keeps it linear: the scan left of each `@` is capped, so one `@`
+        costs the same whatever precedes it. RFC 5321 caps a local part at 64,
+        so no real address is truncated by this."""
+        from gflow_cli.auth.verification import _MAX_LOCAL_PART, find_emails
+
+        local = "x" * (_MAX_LOCAL_PART + 10)
+        assert find_emails(f"{local}@example.com") == ["x" * _MAX_LOCAL_PART + "@example.com"]

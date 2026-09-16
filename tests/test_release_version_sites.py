@@ -78,7 +78,9 @@ def _declared_versions(rel: str) -> list[str]:
         data = json.loads(text)
         found = [str(data["version"])] if "version" in data else []
         found += [
-            str(pkg["version"]) for pkg in data.get("packages", []) if isinstance(pkg, dict) and "version" in pkg
+            str(pkg["version"])
+            for pkg in data.get("packages", [])
+            if isinstance(pkg, dict) and "version" in pkg
         ]
         return found
     return []

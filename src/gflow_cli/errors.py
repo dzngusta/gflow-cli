@@ -30,6 +30,7 @@ __all__ = [
     "FlowAgentUiError",
     "FlowApiError",
     "FlowAppError",
+    "FlowAccessUnavailableError",
     "FlowAccountChooserError",
     "FlowHostMigratedError",
     "FrameExtractionError",
@@ -94,6 +95,25 @@ class GFlowError(Exception):
     #: projection; the local path/artifacts stay CLI-local (S21).
     incident_ref: IncidentRef | None = None
 
+    #: Per-instance override of this class's ``RETRYABLE_ERRORS`` membership; ``None``
+    #: keeps it. It lived on ``FlowAppError`` while that was the only producer, whose
+    #: comment set the condition for promoting it: "move it up if, and only if, a second
+    #: class needs it." #799 is the second — a migrated account whose composer is
+    #: agent-only raises ``FlowAgentUiError``, which is in ``RETRYABLE_ERRORS`` for the
+    #: labs A/B cohort that flaps, while which composer an account gets does not.
+    #: ``is_retryable`` reads it by ``getattr``.
+    #:
+    #: **Not every subclass accepts it.** Those declaring their own ``__init__``
+    #: (``RateLimitError``, ``WireFormatError``, ``BatchPartialError``,
+    #: ``BatchIntegrityError``, ``ChainPartialError``, ``SyncPartialError``) do not
+    #: forward it and raise ``TypeError`` — deliberately left that way rather than
+    #: threaded through six constructors no raise site passes it to. The failure is
+    #: LOUD, which is the property that matters: a silently dropped ``retryable=False``
+    #: would hand a caller a doomed retry nobody could explain. Add it to a subclass
+    #: when a raise site there actually needs it; ``test_errors_classification.py`` pins
+    #: the current split so this note cannot quietly go stale.
+    retryable: bool | None = None
+
     def __init__(
         self,
         detail: str = "",
@@ -102,6 +122,7 @@ class GFlowError(Exception):
         instance: str | None = None,
         route: str = "",
         remediation_hint: str | None = None,
+        retryable: bool | None = None,
     ) -> None:
         message = self.title if not detail else f"{self.title}: {detail}"
         super().__init__(message)
@@ -109,6 +130,7 @@ class GFlowError(Exception):
         self.status = status
         self.instance = instance or ""
         self.route = route
+        self.retryable = retryable
         self.remediation_hint = (
             remediation_hint if remediation_hint is not None else self._default_remediation
         )
@@ -170,6 +192,12 @@ class FlowApiError(GFlowError):
                 instance=kwargs.pop("instance", None),
                 route=route_kw,
                 remediation_hint=kwargs.pop("remediation_hint", None),
+                # Forwarded like its siblings above. This branch pops named kwargs one
+                # by one, so an unlisted one is dropped in silence — and since
+                # `retryable` moved onto the base it now LOOKS accepted here while
+                # doing nothing (council D1). No caller passes it today; the cost of
+                # it being wrong later is a doomed retry nobody can explain.
+                retryable=kwargs.pop("retryable", None),
             )
             self.body = body
         else:
@@ -687,11 +715,17 @@ class InsufficientCreditsError(GFlowError):
 
 
 class FlowAgentUiError(GFlowError):
-    """Raised when Google Flow's new Agentic UI cohort is detected at runtime.
+    """Raised when a Flow composer replaces the classic generation controls with a
+    chat interface gflow-cli cannot drive. Exit 25 instead of a timeout or a drift
+    error.
 
-    This cohort replaces the classic generation controls with a chat interface
-    that is not supported by gflow-cli. Raising this error allows the CLI to
-    fail cleanly with exit code 25 instead of timing out or raising drift errors.
+    **Two producers, and they differ on retry.** On labs.google this is the Agentic
+    UI A/B cohort, which is server-assigned per page load and flaps — hence class
+    membership in ``RETRYABLE_ERRORS``, and hence the default remediation's advice to
+    try another profile. On the migrated ``flow.google.com`` host it is also raised
+    for an account whose composer is **agent-only** (#799): no classic arm exists at
+    all, so that raise site passes ``retryable=False`` and its own
+    ``remediation_hint``, because no retry or profile change can reach it.
     """
 
     problem_type = "https://gflow-cli.dev/errors/flow-agent-ui"
@@ -733,23 +767,12 @@ class FlowAppError(GFlowError):
     problem_type = "https://gflow-cli.dev/errors/flow-app"
     title = "Google Flow web app error"
 
-    #: Per-instance override of this class's ``RETRYABLE_ERRORS`` membership; ``None``
-    #: keeps it. It lives HERE and not on ``GFlowError`` because there is exactly one
-    #: producer (``_common.py::raise_if_known_landing``) and one class with two shapes
-    #: that disagree about retrying. ``is_retryable`` reads it by ``getattr``, so a base
-    #: declaration would buy no typing and no test-double visibility — only a field on
-    #: every error in the project. Move it up if, and only if, a second class needs it.
-    retryable: bool | None = None
     _default_remediation = (
         "Google Flow did not serve the page gflow asked for — a Flow-side condition, "
         "not a gflow-cli bug. If it crashed (client-side exception), retry in a moment. "
         "If it redirected to flow.google.com/about, open the project in a browser on "
         "that host and confirm this account can reach it."
     )
-
-    def __init__(self, *args: Any, retryable: bool | None = None, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self.retryable = retryable
 
 
 class FlowHostMigratedError(GFlowError):
@@ -807,6 +830,38 @@ class FlowAccountChooserError(GFlowError):
     _default_remediation = (
         "Run `gflow auth login --profile <name>` and complete the account chooser "
         "manually while signed in as the recorded account."
+    )
+
+
+class FlowAccessUnavailableError(GFlowError):
+    """Raised when Flow renders its own "you don't have access" screen for this account.
+
+    **Not retryable, and that is the point.** Before this existed the state had no route,
+    so the editor sweep reported the only thing it could see and told the user Google had
+    changed its frontend — measured as an A/B on 2026-09-15, exit 23 before, 39 after.
+    Not 3 or 8 (nothing expired; a re-login cannot buy a subscription) and not 23
+    (nothing drifted; the app loaded and routed to a component built for this state).
+
+    Detected by component, not by URL or status: there is no entitlement field on the
+    wire, ``flow.google.com/`` answers 200 with a client-side hop, and the path varies.
+    The evidence, the four refuted alternatives, and the surfaces this does **not**
+    cover are in ``docs/superpowers/spikes/2026-09-15-unentitled-account-signal.md``.
+
+    The remediation cites Google's eligibility page rather than paraphrasing it: Flow
+    wants age verification, a supported region *and* a paid plan, and only the missing
+    plan was measured here. Asserting which one failed would be the confident guess this
+    class exists to stop.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/flow-access-unavailable"
+    title = "This Google account cannot reach Flow"
+    _default_remediation = (
+        "Google Flow served its unavailable screen for this account. Flow needs a "
+        "Google AI Plus, Pro or Ultra subscription (or a qualifying Workspace plan), "
+        "an age-verified account, and a supported region — check which applies at "
+        "https://support.google.com/flow/answer/16353333 and open "
+        "https://flow.google.com in a browser on this account to confirm. Signing in "
+        "again cannot change it."
     )
 
 
@@ -1140,17 +1195,19 @@ class DataIntegrityError(DataStoreError):
 class FrameExtractionError(GFlowError):
     """Raised when the video-chain last-frame extractor cannot produce a frame.
 
-    Covers both the missing-optional-dependency case (PyAV / ``av`` not
-    installed because the ``chain`` extra was skipped) and an undecodable /
-    truncated input video. The remediation points at the install extra so an
-    operator hitting the missing-dependency path can self-serve.
+    Covers both the missing-optional-dependency case (the ``chain`` extra was
+    skipped, so ``av`` and/or ``pillow`` are absent) and an undecodable /
+    truncated input video. The remediation names the extra AND both packages it
+    carries so an operator hitting the missing-dependency path can self-serve —
+    it used to say only "PyAV", which left a missing Pillow undiagnosable (#813).
     """
 
     problem_type = "https://gflow-cli.dev/errors/frame-extraction"
     title = "Last-frame extraction failed"
     _default_remediation = (
-        "Verify input video file is readable and non-corrupt. Ensure "
-        "gflow-cli[chain] dependencies (PyAV) are installed."
+        "Verify input video file is readable and non-corrupt. Ensure the "
+        "gflow-cli[chain] extra and both packages it carries (av, pillow) are "
+        "installed: pip install 'gflow-cli[chain]'"
     )
 
 
@@ -1304,6 +1361,11 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     # Direct GFlowError subclass; exit 38 distinguishes account chooser stall
     # from generic errors (1) without parsing stderr.
     FlowAccountChooserError: 38,
+    # FlowAccessUnavailableError: Flow rendered its unavailable screen — this
+    # account has no Flow entitlement. Exit 39 rather than 3/8 (auth) because a
+    # re-login cannot fix it, and rather than 23 because nothing drifted: the
+    # app loaded and routed to a component built for exactly this state.
+    FlowAccessUnavailableError: 39,
     # UiModeUnavailableError (issue #299): a command's required arm (--ui-mode /
     # inferred) couldn't be reached after a best-effort switch. Direct GFlowError
     # subclass — retryable policy abort, distinct from FlowAgentUiError (25).
@@ -1378,7 +1440,7 @@ def is_retryable(exc: GFlowError) -> bool:
     """Shared retry classification consumed by every machine-readable error surface.
 
     The class answer (``RETRYABLE_ERRORS``) unless the raise site overrode it — see
-    ``FlowAppError.retryable``.
+    ``GFlowError.retryable``.
 
     ``isinstance(..., bool)`` rather than a truthiness test, deliberately: a
     ``MagicMock`` answers every ``getattr`` with a truthy child mock, so

@@ -741,8 +741,9 @@ def _build_video_media_inputs(
         "(resolves to referenceEntities/referenceImages). Reference a SAVED named asset via "
         "@Name; reference an arbitrary one-off image via reference_images. See "
         "docs/REFERENCE_STRATEGIES.md. "
-        "On migrated flow.google.com accounts, use an existing project and local reference "
-        "files; UUID/entity references and image4 are labs-only. "
+        "On accounts served from flow.google.com, use an existing project and local "
+        "reference files; UUID/entity references and image4 are not ported to that "
+        "composer yet and fail before submit; retrying will not clear it. "
         "Returns local file paths to the generated images."
     ),
 )
@@ -1010,8 +1011,11 @@ async def gflow_generate_video(  # NOSONAR
         aspect: Aspect ratio — '9:16' or '16:9'.
         initial_frame: Path to start frame image (required for i2v). On an
             account Google has moved to flow.google.com a **local file** is the
-            only form served there (uploaded through the editor, bound by file
-            name); a Flow media UUID returns the exit-36-equivalent envelope.
+            only form served there — uploaded through the editor, then bound from
+            the Frames picker under a **run-unique** name (``hero.png`` is listed
+            as ``hero-<8 hex>.png``), so a re-run of the same file cannot bind an
+            earlier upload (#792); a Flow media UUID returns the
+            exit-36-equivalent envelope.
         end_frame: Path to end frame image (optional for i2v). Not ported to
             flow.google.com yet — exit-36-equivalent envelope on a moved account.
         reference_images: List of reference image paths (ingredients) for r2v.
@@ -1511,7 +1515,24 @@ async def gflow_auth_status(profile: str = _DEFAULT_PROFILE) -> dict[str, Any]:
             "profile": resolved,
             "user_email": status.user_email,
         }
-    if status.outcome is verification.FlowSessionOutcome.VERIFICATION_ERROR:
+    if status.outcome is verification.FlowSessionOutcome.PROFILE_MARKER_MISSING:
+        # #796: a local profile-state fault. Not retryable (the marker will not
+        # reappear on its own) and not an expired session, so neither 503 nor 401
+        # describes it — an agent that retries or re-logins here learns nothing.
+        error = {
+            "type": "https://gflow-cli.dev/errors/profile-marker-missing",
+            "title": "Profile is missing its browser-strategy marker",
+            "status": 409,
+            "detail": status.detail,
+            "message": status.detail,
+            "retryable": False,
+            "remediation_hint": (
+                "This profile has no `.gflow_browser_strategy` marker, so its "
+                "cookies cannot be read. Re-run `gflow auth login --browser "
+                "chrome` for this profile to rewrite it."
+            ),
+        }
+    elif status.outcome is verification.FlowSessionOutcome.VERIFICATION_ERROR:
         # A network/endpoint problem is not fixed by re-login — the
         # machine-readable discriminators must say so too (post-merge review:
         # labeling this 401/auth-expired sent type-dispatching agents into an

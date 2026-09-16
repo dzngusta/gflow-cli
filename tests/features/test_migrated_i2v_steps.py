@@ -9,6 +9,7 @@ against a stubbed project entry.
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
@@ -25,6 +26,7 @@ from gflow_cli.errors import (
     FlowHostMigratedError,
     MediaUploadRejectedError,
     ReferenceNotFoundError,
+    UiSelectorDriftError,
     WireFormatError,
 )
 from tests.api.transports.test_migrated_composer import (
@@ -122,12 +124,47 @@ def _frame_named(world: dict[str, Any], name: str) -> None:
     world["frame"] = _png(world["frame"].parent, name)
 
 
-@given(parsers.parse('the picker lists no asset named "{name}"'))
-def _picker_misses(world: dict[str, Any], name: str) -> None:
+@given('the library already lists an older "hero.png"')
+def _stale_lookalike(world: dict[str, Any]) -> None:
+    world["hop"] = True  # the default picker_options already carry it; make it visible
+
+
+@given("the picker does not commit on the option click")
+def _picker_needs_confirm(world: dict[str, Any]) -> None:
     world["hop"] = True
-    world["page"].dom.picker_options = [
-        o for o in world["page"].dom.picker_options if name.casefold() not in o.casefold()
-    ]
+    world["page"].dom.picker_needs_confirm = True
+
+
+@given("the picker offers no confirm")
+def _picker_no_confirm(world: dict[str, Any]) -> None:
+    world["hop"] = True
+    world["page"].dom.picker_has_confirm = False
+
+
+@then("the picker's confirm is clicked and the Start chip binds")
+def _confirm_clicked(world: dict[str, Any]) -> None:
+    assert "error" not in world, world.get("error")
+    dom = world["page"].dom
+    assert dom.confirm_clicks == 1
+    assert dom.chip_bound and not dom.picker_open
+
+
+@then("the run fails with exit 23 naming the missing confirm")
+def _exit_23_no_confirm(world: dict[str, Any]) -> None:
+    exc = world.get("error")
+    assert isinstance(exc, UiSelectorDriftError), exc
+    assert EXIT_CODE_MAP[UiSelectorDriftError] == 23
+    assert "carries no confirm" in str(exc)
+    assert world["page"].dom.confirm_clicks == 0
+    assert world["page"].dom.submit_clicked == 0
+
+
+@given("the library never lists the upload")
+def _picker_misses(world: dict[str, Any]) -> None:
+    world["hop"] = True
+    # Flow accepted the upload and the library never showed it — the only way the
+    # search can miss now that every upload carries a run-unique name (#792).
+    world["page"].dom.picker_lists_upload = False
 
 
 @given("the Start chip is bound")
@@ -202,13 +239,19 @@ def _i2v_both_frames(world: dict[str, Any]) -> None:
 @then("the composer uploads the file and the maseQ reply names a media id")
 def _uploaded(world: dict[str, Any]) -> None:
     assert "error" not in world, world.get("error")
-    assert world["page"].dom.chosen_files == [str(world["frame"])]
+    staged = Path(world["page"].dom.chosen_files[0])
+    # A run-unique COPY, never the user's file itself (#792).
+    assert staged != world["frame"]
+    assert re.fullmatch(rf"{re.escape(world['frame'].stem)}-[0-9a-f]{{8}}\.png", staged.name)
+    world["staged_name"] = staged.name
 
 
-@then(parsers.parse('the Start chip binds the asset listed under "{name}"'))
+@then(parsers.parse('the Start chip binds the asset uploaded from "{name}"'))
 def _bound(world: dict[str, Any], name: str) -> None:
     dom = world["page"].dom
-    assert dom.picked == [name] and dom.chip_bound
+    # Bound by the name the upload was LISTED under, not by the source file's name.
+    assert dom.picked == [world["staged_name"]] and dom.chip_bound
+    assert dom.picked[0].startswith(Path(name).stem)
 
 
 @then("the eb1hJf submit body carries that media id and an i2v model key")
@@ -235,7 +278,7 @@ def _exit_32(world: dict[str, Any]) -> None:
 @then("the detail names the file and the picker")
 def _detail_names(world: dict[str, Any]) -> None:
     text = str(world["error"])
-    assert world["frame"].name in text and "picker" in text
+    assert world["frame"].stem in text and "picker" in text
 
 
 @then("the run fails with exit 7 naming the t2v key on an i2v request")

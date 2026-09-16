@@ -7,6 +7,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.77.0] — 2026-09-16
+
+### Fixed
+
+- **Accounts Flow moved to `flow.google.com` could not sign in at all.** Verification used
+  exactly one oracle — `labs.google/fx/api/auth/session` — which answers `200 {}` forever for
+  a migrated account, so a perfectly usable Flow workspace reported *"Signed in to Google, but
+  not to the Flow app"* and gflow refused every command. A total lockout, not a degraded
+  feature. When labs declines **and** the profile carries a `flow.google.com` app-session
+  cookie, gflow now confirms the session against the host that actually serves the app.
+
+  The cookie only **gates** that check; it never decides one. A cookie on disk outlives a
+  password change or a "sign out of all devices", so the decision is where the request lands:
+  a revoked session is redirected off `myaccount.google.com`, which is server-attested in a
+  way page content is not. The account's address is a display label only, so a page reshape
+  cannot cost a user their login.
+
+  **Google Workspace accounts are covered.** An earlier revision gated authentication on an
+  `@gmail.com`-only pattern, which silently declined every custom domain — `dev@axelate.io`,
+  `user@mycompany.com`, even `user@googlemail.com` — leaving this bug open for them while
+  appearing fixed. `docs/AUTHENTICATION.md` documents Workspace SSO as supported.
+  Live-verified on a Workspace account: `AUTHENTICATED`, correct address, 2/2.
+
+  **This also prevents a profile downgrade.** A failed verification rolled the Chrome marker
+  back, flipping `channel_for_profile` from `chrome` to `None` and silently demoting
+  generation to bundled Chromium on a profile created with `--browser chrome`. The rollback is
+  gated on `not verified`, so a verification that now succeeds never triggers it. Measured
+  before and after on the same profile, same cookies: exit 8 / marker gone -> exit 0 / marker
+  intact. ([#791](https://github.com/ffroliva/gflow-cli/issues/791),
+  [#796](https://github.com/ffroliva/gflow-cli/issues/796))
+- **Three lists of "the release version sites" disagreed, and one lived inside the gate that
+  catches the disagreement.** `check_repo_hygiene.py`'s docstring said three files, its own
+  `_check_version_agreement` checked five (six occurrences), and `skills/release/SKILL.md`
+  named a fourth set omitting `server.json` and `uv.lock` — so a release engineer met each
+  omission as a gate failure at the point of highest pressure. There are in fact **seven
+  sites across three separate gates**, and no list knew them all; coverage was complete, but
+  discoverability was not. The skill now carries the one canonical table, its staging step
+  stages all seven, and `tests/test_release_version_sites.py` **parses** that table rather
+  than restating it — a constant would have been the fourth disagreeing copy.
+  ([#839](https://github.com/ffroliva/gflow-cli/issues/839))
+
+### Changed
+
+- **`wait_until="networkidle"` on the `ui_automation` bootstrap is documented, not removed.**
+  [#836](https://github.com/ffroliva/gflow-cli/issues/836) proposed dropping it, on the theory
+  that a held-open connection made it burn the full 45 s ceiling. Measured on a live profile,
+  5 navigations per arm: it fires every time and reached the ceiling **0/5**, so there is no
+  hang — but it costs **3422 ms mean against 1022 ms** for the prescribed pattern, with 4x the
+  spread. Removing it turned the #580/#584 navigation ratchet red: both call sites are in that
+  test's exemption set by name, because `goto(domcontentloaded)` returns 591–797 ms *before*
+  Flow's locale redirect lands and `networkidle` is what absorbs it. The issue read two call
+  sites with different constraints as one contradiction. The measurement and the probe ship so
+  the next reader finds them instead of re-deriving this.
+
+- **The MCP Registry publish never ran — not once, on any release that shipped with it.**
+  `mcp-registry.yml` triggered on `release: published`, but `release.yml` creates the Release
+  with the default `GITHUB_TOKEN`, and GitHub starts no workflow runs from
+  `GITHUB_TOKEN`-created events. Measured on v0.76.0: a real Release published
+  (`draft=false`, `prerelease=false`), the workflow file on the default branch, and
+  `gh run list --workflow=mcp-registry.yml` returning **zero runs, ever**. The trigger was
+  structurally dead rather than mistimed, so it would not have begun working at the next
+  release. `release.yml` now **calls** the workflow (`uses:` + `needs: build-and-publish`)
+  instead of relying on an event, so there is nothing for the token rule to block. A
+  user-owned PAT on the Release step was the alternative and was rejected on maintenance
+  grounds: fine-grained tokens expire after at most 366 days, which puts a scheduled failure
+  on a path that runs a handful of times a year. `needs:` also enforces the ordering
+  `mcp-publisher` requires — it reads the `mcp-name:` token from the *published* PyPI README —
+  which previously rested on two files agreeing about step order. Registry authentication is
+  unchanged: GitHub Actions OIDC, with no token stored for or handed to the registry.
+  ([#841](https://github.com/ffroliva/gflow-cli/issues/841))
+- **A manual registry dispatch could publish a superseded version, green, with nothing
+  noticing.** A dispatch publishes whatever `server.json` says *on the dispatched ref*.
+  Dispatching `develop` after the v0.76.0 tag but before the back-merge landed republished
+  `0.75.0` to the registry, and the run succeeded. Both triggers now take a required `version`
+  input, asserted against every version field in `server.json`, and fail the run on a
+  mismatch instead of publishing. ([#841](https://github.com/ffroliva/gflow-cli/issues/841))
+- **A pre-release would have become the MCP Registry's *active* listing.** `release.yml` fires
+  on every `v*.*.*` tag, including `v1.2.3rc1`, and that listing is what PulseMCP and GitHub's
+  MCP gallery ingest. While the publish was dead this was latent; repairing it would have
+  armed it. The call is now skipped for pre-releases, and the workflow refuses a pre-release
+  version outright if one reaches it by hand. The prerelease classification has a single
+  definition shared by the GitHub Release flag and the registry gate, rather than two copies
+  of the same expression that would drift. Found by council review, not in production.
+  ([#841](https://github.com/ffroliva/gflow-cli/issues/841))
+
 ## [0.76.0] — 2026-09-16
 
 ### Fixed
@@ -5201,7 +5286,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.76.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.77.0...HEAD
+[0.77.0]: https://github.com/ffroliva/gflow-cli/compare/v0.76.0...v0.77.0
 [0.76.0]: https://github.com/ffroliva/gflow-cli/compare/v0.75.0...v0.76.0
 [0.75.0]: https://github.com/ffroliva/gflow-cli/compare/v0.74.0...v0.75.0
 [0.74.0]: https://github.com/ffroliva/gflow-cli/compare/v0.73.2...v0.74.0

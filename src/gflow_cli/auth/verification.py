@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
+from collections import Counter
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, cast
@@ -329,6 +331,111 @@ async def verify_flow_session(
     return result
 
 
+#: The migrated-host fallback probe. `myaccount` is the oracle because it is
+#: server-side: a revoked session is redirected off it, which a client-rendered page
+#: cannot attest to.
+_MYACCOUNT_ORIGIN = "https://myaccount.google.com"
+#: Any domain, not just gmail.com — an `@gmail.com`-only pattern declined every
+#: Google Workspace account (dev@axelate.io, user@mycompany.com, user@googlemail.com
+#: all failed to match), leaving #791 open for them with no signal it had refused.
+_EMAIL_RE = r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}"
+_MYACCOUNT_URL = f"{_MYACCOUNT_ORIGIN}/?hl=en"
+#: 15 s was measured too tight: the probe answers in 2.6-7.2 s idle but timed out under
+#: browser contention during a 10-profile sweep.
+_MIGRATED_PROBE_TIMEOUT_MS = 30_000
+
+
+def _origin_of(url: str) -> str:
+    """Scheme + host only — never log a URL with a query string from an auth page."""
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}" if parts.scheme else "(unparseable)"
+
+
+async def _verify_migrated_host_fallback(
+    profile_dir: Path, source: str
+) -> FlowSessionStatus | None:
+    """ai4u delta (2026-09-12) — migrated-host session oracle.
+
+    For accounts Google has moved to flow.google.com, the labs.google NextAuth
+    session is never minted (the labs app hands off immediately; observed:
+    47 cookies, zero on labs.google, but OSID/__Secure-OSID present on
+    .flow.google.com and SAPISID/SID on .google.com). The labs oracle then
+    reports GOOGLE_SESSION_ONLY although the workspace is fully usable —
+    gflow's own migrated-host driver authenticates via exactly these cookies
+    (spike 2026-09-05-migrated-host-wire-protocol: ".google.com SSO cookies
+    already in the profile authenticate the host").
+
+    Fail-closed: upgrades GOOGLE_SESSION_ONLY to AUTHENTICATED only when BOTH
+    the .google.com SSO cookie (SAPISID) AND the flow.google.com app session
+    cookie (__Secure-OSID/OSID) are present, AND the account email resolves
+    from myaccount.google.com. Anything else returns None (caller keeps the
+    original outcome). Never touches other outcomes.
+    """
+    from .strategies import async_playwright
+
+    try:
+        async with async_playwright() as pw:
+            ctx = await pw.chromium.launch_persistent_context(
+                user_data_dir=str(profile_dir),
+                channel="chrome",
+                headless=True,
+                args=["--password-store=basic"],
+            )
+            try:
+                cookies = await ctx.cookies()
+                names = {(c.get("name"), c.get("domain", "")) for c in cookies}
+                has_sso = any(n == "SAPISID" and "google.com" in d for n, d in names)
+                has_flow_osid = any(
+                    n in ("__Secure-OSID", "OSID") and "flow.google.com" in d for n, d in names
+                )
+                if not (has_sso and has_flow_osid):
+                    return None
+                resp = await ctx.request.get(_MYACCOUNT_URL, timeout=_MIGRATED_PROBE_TIMEOUT_MS)
+                page_body = await resp.text()
+                final_url = str(resp.url)
+            finally:
+                await ctx.close()
+    except Exception as exc:
+        logger.warning(
+            "auth_migrated_fallback_probe_error", source=source, error=type(exc).__name__
+        )
+        return None
+
+    # THE auth signal, and it is server-attested: a dead or revoked session cannot stay
+    # on myaccount — Google redirects it to the sign-in page. Checking where we landed
+    # is therefore the decision; the address below is only a label.
+    #
+    # The address must NOT be the decision. It used to be, via an `@gmail.com`-only
+    # regex, which silently declined every Google Workspace account (measured:
+    # `dev@axelate.io`, `user@mycompany.com`, even `user@googlemail.com` all failed to
+    # match) — so #791 stayed open for them with no signal that the fallback had
+    # refused. Widening that regex alone would have been worse: any address on a
+    # signed-out page would then read as proof of a session.
+    if not final_url.startswith(_MYACCOUNT_ORIGIN):
+        logger.warning(
+            "auth_migrated_fallback_not_signed_in", source=source, landed=_origin_of(final_url)
+        )
+        return None
+
+    # Most frequent, not first. Measured on a live myaccount response (1.28 MB,
+    # 2026-09-16): 9 matches, all 9 the account's own address, 0 competing candidates —
+    # so first-match happened to be right. It is right by luck, though: one support or
+    # noreply address rendered above the account's would silently relabel the user.
+    # Counting costs nothing and removes the coin flip. Ties keep document order, so
+    # the single-candidate case is unchanged.
+    found = re.findall(_EMAIL_RE, page_body)
+    email = Counter(found).most_common(1)[0][0] if found else None
+    return FlowSessionStatus(
+        outcome=FlowSessionOutcome.AUTHENTICATED,
+        # Absent when the page shape changes — the session is still proven by the URL,
+        # so a missing label must not cost the user their login.
+        user_email=email,
+        source=source,
+    )
+
+
 async def verify_flow_profile(
     profile_dir: Path,
     *,
@@ -340,6 +447,9 @@ async def verify_flow_profile(
     (falling back to a marker-gated Playwright context on decryption failure),
     then calls the NextAuth session endpoint with up to `_MAX_ATTEMPTS` attempts.
     Fail-closed: any failure yields VERIFICATION_ERROR, never AUTHENTICATED.
+
+    ai4u delta (2026-09-12): when the labs oracle yields GOOGLE_SESSION_ONLY,
+    a migrated-host fallback probe runs (see _verify_migrated_host_fallback).
     """
     _validate_profile_in_home(profile_dir)
 
@@ -385,4 +495,15 @@ async def verify_flow_profile(
             source=source,
             status_code=status_code,
         )
+    if result.outcome is FlowSessionOutcome.GOOGLE_SESSION_ONLY:
+        # ai4u delta (2026-09-12): migrated-host fallback — see
+        # _verify_migrated_host_fallback docstring. Fail-closed.
+        fallback = await _verify_migrated_host_fallback(profile_dir, source)
+        if fallback is not None:
+            logger.warning(
+                "auth_migrated_host_fallback_authenticated",
+                source=source,
+                detail="labs NextAuth absent; flow.google.com OSID session + SSO cookies present",
+            )
+            return fallback
     return result

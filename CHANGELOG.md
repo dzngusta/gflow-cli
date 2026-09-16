@@ -23,6 +23,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   output for every address shape, including the Workspace and custom domains that #791
   turned on: 40 000 chars now scan in under a millisecond, and 440 000 base64-shaped ones
   in 0.2 ms. ([#852](https://github.com/ffroliva/gflow-cli/issues/852))
+- **The sign-in window never closed for an account Google serves from `flow.google.com`.**
+  `gflow auth login --browser chrome` watches the `labs.google` session endpoint to know
+  when to close Chrome — and for a migrated account labs hands off without ever minting a
+  session, so the one oracle the detector had could not answer. The window stayed open for
+  the full 600 s while the banner promised gflow would close it, and the timeout then
+  propagated *past* verification, so a sign-in that had completed perfectly was discarded
+  unread and the user got exit 12 for a login that worked. It is the first thing a new user
+  on a migrated account meets. v0.77.0 fixed the *verification* for these accounts, which
+  made the outcome correct only for users who closed the window themselves.
+
+  Two changes, and neither of them moves the authentication decision into a cookie. gflow
+  now also stops waiting when the jar carries both halves of a migrated session (the
+  `.google.com` SSO cookie **and** the `flow.google.com` app-session cookie) — that ends a
+  wait which had no other way to end; `verify_flow_profile` still asks a server about what
+  landed on disk, and is still the only thing that can call a login successful. And a
+  timeout no longer discards the profile unread: gflow reads it before failing, reports a
+  sign-in the detector missed as the success it is, and otherwise keeps the timeout's own
+  wording. A caller with no on-disk oracle to fall back on (`--browser internal`) keeps
+  waiting exactly as before. ([#849](https://github.com/ffroliva/gflow-cli/issues/849))
 - **`gflow update` could report a version for an install that no longer starts.** A package
   manager replaces files in place, so an interrupted upgrade leaves a venv whose *metadata*
   reads perfectly and whose *imports* are dead. `gflow update` only ever re-read the version,

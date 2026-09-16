@@ -29,6 +29,7 @@ from gflow_cli.profile_lease import ProfileLease
 from .cookies import get_chrome_cookie_snapshot
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
     from pathlib import Path
 
     from playwright.async_api import BrowserContext
@@ -391,6 +392,26 @@ def find_emails(body: str) -> list[str]:
     return found
 
 
+def has_migrated_app_session(cookies: Iterable[Mapping[str, Any]]) -> bool:
+    """Both halves of a migrated Flow session are present in this jar.
+
+    The `.google.com` SSO cookie alone means "signed in to Google"; the
+    `flow.google.com` app-session cookie alone means nothing without it. Only
+    the pair says an account has a session on the host that serves the app.
+
+    This is a NECESSARY condition, never a sufficient one — a cookie on disk
+    outlives a password change or a "sign out of all devices". Everything that
+    decides authentication goes on to ask a server (`_verify_migrated_host_fallback`
+    below). What the pair IS good for on its own is deciding when to stop
+    *waiting*: the labs oracle never answers for these accounts, so without some
+    other signal the login poll runs to its deadline (#849).
+    """
+    names = {(c.get("name"), c.get("domain", "")) for c in cookies}
+    has_sso = any(n == "SAPISID" and "google.com" in d for n, d in names)
+    has_flow_osid = any(n in ("__Secure-OSID", "OSID") and "flow.google.com" in d for n, d in names)
+    return has_sso and has_flow_osid
+
+
 def _origin_of(url: str) -> str:
     """Scheme + host only — never log a URL with a query string from an auth page."""
     from urllib.parse import urlsplit
@@ -430,13 +451,7 @@ async def _verify_migrated_host_fallback(
                 args=["--password-store=basic"],
             )
             try:
-                cookies = await ctx.cookies()
-                names = {(c.get("name"), c.get("domain", "")) for c in cookies}
-                has_sso = any(n == "SAPISID" and "google.com" in d for n, d in names)
-                has_flow_osid = any(
-                    n in ("__Secure-OSID", "OSID") and "flow.google.com" in d for n, d in names
-                )
-                if not (has_sso and has_flow_osid):
+                if not has_migrated_app_session(await ctx.cookies()):
                     return None
                 resp = await ctx.request.get(_MYACCOUNT_URL, timeout=_MIGRATED_PROBE_TIMEOUT_MS)
                 page_body = await resp.text()

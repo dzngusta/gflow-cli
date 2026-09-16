@@ -24,7 +24,7 @@ channel no longer accepts anything).
 | Channel | Audience | Submit via | Status | Last verified |
 |---|---|---|---|---|
 | [PyPI](https://pypi.org/project/gflow-cli/) | Python users, every downstream scraper | `uv publish` (release) | listed | 2026-09-14 |
-| [Official MCP Registry](https://registry.modelcontextprotocol.io) | Agent devs; feeds other registries | `mcp-publisher`, automated on release (#829) | **automated — first run is v0.76.0's own release job** | 2026-09-16 |
+| [Official MCP Registry](https://registry.modelcontextprotocol.io) | Agent devs; feeds other registries | `mcp-publisher` workflow, **manual dispatch for now** (#829, #841) | **listed** · `0.76.0` active · the `release: published` trigger does NOT fire ([#841](https://github.com/ffroliva/gflow-cli/issues/841)) | 2026-09-16 |
 | [Glama](https://glama.ai/mcp/servers/ffroliva/gflow-cli) | Broad MCP audience (87k servers) | Web form | **listed** · claimed · rated **A** · release **0.75.0** published · Auto-Release on | 2026-09-15 |
 | [MCP Market](https://mcpmarket.com/server/gflow-cli) | Consumer discovery | — (crawled us) | **listed** | 2026-09-14 |
 | [skills.sh](https://skills.sh/ffroliva/gflow-cli) | Cross-agent skill users | — (telemetry) | **listed** | 2026-09-14 |
@@ -54,6 +54,18 @@ channel no longer accepts anything).
 
 Ranked by reach per hour of work. The eight submissions are out; what is left is gated on one
 thing, and it is not a distribution task.
+
+> ⚠️ **The automation does not fire yet — v0.76.0 was published by hand.** `mcp-registry.yml`
+> triggers on `release: published`, but `release.yml` creates the Release with the default
+> `GITHUB_TOKEN`, and GitHub does not start workflow runs from `GITHUB_TOKEN`-created events.
+> Measured on v0.76.0: a real Release was published and the workflow had **zero runs, ever**
+> ([#841](https://github.com/ffroliva/gflow-cli/issues/841)).
+>
+> Until that is fixed the sequence is **tag → release → back-merge → `gh workflow run
+> mcp-registry.yml --ref develop`**, and the order matters: `workflow_dispatch` publishes
+> whatever `server.json` says **on the dispatched ref**, so dispatching before the back-merge
+> republishes the *previous* version — silently, with a green run. That happened on v0.76.0
+> and was corrected by re-dispatching afterwards.
 
 1. **Publish to the Official MCP Registry** — the one that feeds the others (PulseMCP ingests it;
    GitHub's gallery is built on it). **v0.75.0 is the release that unblocks it**, and this document

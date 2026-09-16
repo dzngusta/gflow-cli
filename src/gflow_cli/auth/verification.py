@@ -339,11 +339,57 @@ _MYACCOUNT_ORIGIN = "https://myaccount.google.com"
 #: Any domain, not just gmail.com — an `@gmail.com`-only pattern declined every
 #: Google Workspace account (dev@axelate.io, user@mycompany.com, user@googlemail.com
 #: all failed to match), leaving #791 open for them with no signal it had refused.
-_EMAIL_RE = r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}"
+#:
+#: Split in two, and anchored on the `@`, because one combined pattern was
+#: quadratic (#852). `[\w.+-]+@…` retries from every start position and rescans
+#: its run before failing to find an `@`, so an unbroken run of characters that
+#: class accepts costs O(n²) — measured 12.1 s for 40 000 of them, and the class
+#: covers the whole URL-safe base64 alphabet, which a Google page is full of.
+#: Leading with the literal `@` lets CPython's `re` use its literal-prefix fast
+#: search, so the work becomes proportional to the number of `@` in the document.
+_DOMAIN_RE = re.compile(r"@[\w.-]+\.[A-Za-z]{2,}")
+#: The non-alphanumeric half of `[\w.+-]`. Python's `\w` is exactly
+#: "`str.isalnum()` or underscore" (its own docs say so), so the two together
+#: reproduce that class character for character.
+#:
+#: Spelled out rather than left as a regex because `[\w.+-]+\Z` is itself
+#: super-linear (Sonar python:S8786) — the window below bounds it in practice,
+#: but a reader cannot see that from the pattern, and neither can a scanner. A
+#: backwards scan is O(1) per character and visibly so.
+_LOCAL_PART_PUNCT = "_.+-"
+#: RFC 5321 caps a local part at 64 octets. It is also what keeps the scan
+#: linear: the window is constant, so each `@` costs the same regardless of the
+#: page. ponytail: a longer local part is truncated rather than dropped — raise
+#: this if a real address is ever found past it.
+_MAX_LOCAL_PART = 64
 _MYACCOUNT_URL = f"{_MYACCOUNT_ORIGIN}/?hl=en"
 #: 15 s was measured too tight: the probe answers in 2.6-7.2 s idle but timed out under
 #: browser contention during a 10-profile sweep.
 _MIGRATED_PROBE_TIMEOUT_MS = 30_000
+
+
+def find_emails(body: str) -> list[str]:
+    """Every address in `body`, in document order, in one linear pass.
+
+    Behaviourally the same as the single pattern it replaces for anything that
+    looks like an address; see `_DOMAIN_RE` for why that pattern could not stay.
+    """
+    found: list[str] = []
+    consumed = 0  # end of the last address emitted — matches never overlap
+    for match in _DOMAIN_RE.finditer(body):
+        at = match.start()
+        # `findall` resumed scanning at the end of its previous match, so a local
+        # part could never reach back into one. Two `@` within 64 characters of
+        # each other is the only shape where that shows, and fuzzing against the
+        # old pattern is what turned it up: 2 differences in 4 000 random bodies.
+        floor = max(consumed, at - _MAX_LOCAL_PART)
+        start = at
+        while start > floor and (body[start - 1].isalnum() or body[start - 1] in _LOCAL_PART_PUNCT):
+            start -= 1
+        if start < at:  # an `@` with no local part in front of it is not an address
+            found.append(body[start:at] + match.group())
+            consumed = match.end()
+    return found
 
 
 def has_migrated_app_session(cookies: Iterable[Mapping[str, Any]]) -> bool:
@@ -440,7 +486,7 @@ async def _verify_migrated_host_fallback(
     # noreply address rendered above the account's would silently relabel the user.
     # Counting costs nothing and removes the coin flip. Ties keep document order, so
     # the single-candidate case is unchanged.
-    found = re.findall(_EMAIL_RE, page_body)
+    found = find_emails(page_body)
     email = Counter(found).most_common(1)[0][0] if found else None
     return FlowSessionStatus(
         outcome=FlowSessionOutcome.AUTHENTICATED,

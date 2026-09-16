@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The address scan in the migrated-host session probe was quadratic.** It reads a
+  1.28 MB `myaccount.google.com` response, and `[\w.+-]+@…` retries from every start
+  position and rescans its run before failing to find an `@` — so an unbroken run of
+  characters that class accepts cost O(n²). Measured: 5 000 chars 0.12 s, 10 000 0.48 s,
+  20 000 2.00 s, **40 000 12.07 s**. The class covers the entire URL-safe base64 alphabet,
+  which a Google page is full of, and the scan runs synchronously inside an `async def`,
+  so a stall blocks the event loop and cancellation cannot land until it returns.
+
+  Anchoring on the literal `@` (which lets CPython's `re` use its literal-prefix fast
+  search) and reading the local part backwards over a bounded 64-character window — the
+  RFC 5321 cap — makes the work proportional to the number of `@` in the document. Same
+  output for every address shape, including the Workspace and custom domains that #791
+  turned on: 40 000 chars now scan in under a millisecond, and 440 000 base64-shaped ones
+  in 0.2 ms. ([#852](https://github.com/ffroliva/gflow-cli/issues/852))
 - **The sign-in window never closed for an account Google serves from `flow.google.com`.**
   `gflow auth login --browser chrome` watches the `labs.google` session endpoint to know
   when to close Chrome — and for a migrated account labs hands off without ever minting a

@@ -16,7 +16,7 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any
 from unittest.mock import patch
 
@@ -114,6 +114,17 @@ class Dom:
     picker_options: list[str] = field(
         default_factory=lambda: ["01-pre-submit.png", "Blue sphere on table"]
     )
+    #: Flow lists an upload under its own file name, so the fake must too — otherwise a
+    #: driver that uploads under a RUN-UNIQUE name (as it now does, to avoid binding a
+    #: look-alike from an earlier run) searches for a name this fixture never lists, and
+    #: every attach test fails for a reason that has nothing to do with the code.
+    #: Set False for the "the upload never listed" case.
+    picker_lists_upload: bool = True
+    waited_ms: list[float] = field(default_factory=list)
+    #: Flow's picker gained an explicit confirm button (observed 5/5 on a migrated
+    #: account, 2026-09-12); older cohorts auto-close on pick and render none.
+    picker_confirms: bool = True
+    confirmed: bool = False
     picker_query: str = ""
     picker_searches: int = 0
     # A fresh upload is indexed server-side: the picker listed it only on a later search
@@ -354,6 +365,16 @@ class FakeLocator:
             dom.events.append("picker_search_focused")
         elif self.kind == "picker_option":
             dom.picked.append(str(target))
+            # Two cohorts. The older one auto-closes on pick; the one measured
+            # 2026-09-12 keeps the overlay up until an explicit confirm is clicked, and
+            # a driver that does not click it hangs on the wait-for-hidden below. Model
+            # both, so the confirm path is exercised rather than assumed.
+            if not dom.picker_confirms:
+                dom.picker_open = False
+                if dom.chip_binds:
+                    dom.chip_bound = True
+        elif self.kind == "picker_confirm":
+            dom.confirmed = True
             dom.picker_open = False
             if dom.chip_binds:
                 dom.chip_bound = True
@@ -387,6 +408,10 @@ class FakeFileChooser:
     async def set_files(self, files: Any) -> None:
         dom = self.page.dom
         dom.chosen_files.append(str(files))
+        if dom.picker_lists_upload:
+            # The real picker lists the asset by display name = file name for uploads
+            # (spike 2026-09-05-migrated-frames-attach.md, Q3).
+            dom.picker_options.insert(0, PurePath(str(files)).name)
         if dom.consent_dialog_on_upload:
             dom.dialog_present = True
             return  # ...and no upload request is ever made
@@ -494,6 +519,16 @@ class FakePage:
         self.scripted_responses: list[tuple[str, ...]] = []  # fired on submit click
         self.scripted_request: tuple[str, str] | None = None  # (rpcid, POST body) on submit
 
+    async def wait_for_timeout(self, ms: float) -> None:
+        """Playwright's no-op grace sleep; the fake records instead of sleeping.
+
+        Absent, the driver's grace-wait before the picker confirm raised AttributeError
+        — which the production `except Exception` swallowed, so every attach test failed
+        further downstream for an unrelated-looking reason. Recorded rather than
+        discarded so a test can assert the grace-wait happened at all.
+        """
+        self.dom.waited_ms.append(ms)
+
     async def goto(self, url: str, **_: Any) -> None:
         self.gotos.append(url)
         self.url = url
@@ -558,6 +593,14 @@ class FakePage:
             return FakeLocator(self, "bound_chip", ["Start"] if dom.chip_bound else [])
         if css == "flow-add-menu-popover-content":
             return FakeLocator(self, "picker_marker", ["picker"])
+        if css == migrated_composer.PICKER_CONFIRM:
+            # The picker's confirm ("Add to prompt" in en). Modelled structurally, like
+            # the driver anchors it — a `has-text` anchor would be locale-bound and is
+            # banned in transports. `picker_confirms` False models the older auto-close
+            # variant, where no confirm is rendered at all.
+            inside = scope is not None and scope.items == ["picker"]
+            present = inside and dom.picker_open and dom.picker_confirms
+            return FakeLocator(self, "picker_confirm", ["confirm"] if present else [])
         if css == "input[type='text']":
             inside = scope is not None and scope.items == ["picker"]
             return FakeLocator(self, "picker_search", ["search"] if inside else [])
@@ -1667,9 +1710,15 @@ async def test_attach_uploads_then_binds_the_frame_by_file_name(tmp_path: Path) 
     with capture_logs() as logs:
         media_id = await MigratedComposer().attach_start_frame(page, PROJ, path)
     assert media_id == MEDIA_UP
-    assert page.dom.chosen_files == [str(path)]
-    assert page.dom.picker_query == path.name
-    assert page.dom.picked == [path.name]
+    # A run-unique COPY is uploaded, never the caller's file: two runs of the same path
+    # would otherwise leave look-alikes and the name search could bind the older one,
+    # putting a stale media id in the submit body (credits spent on the wrong asset).
+    uploaded = PurePath(page.dom.chosen_files[0]).name
+    assert uploaded != path.name, "the upload must not reuse the caller's file name"
+    assert re.fullmatch(rf"{re.escape(path.stem)}-[0-9a-f]{{8}}{re.escape(path.suffix)}", uploaded)
+    assert not (tmp_path / uploaded).exists(), "the temporary copy must be cleaned up"
+    assert page.dom.picker_query == uploaded
+    assert page.dom.picked == [uploaded]
     assert page.dom.chip_bound and not page.dom.picker_open
     events = [e["event"] for e in logs]
     assert "migrated.frame_uploaded" in events and "migrated.frame_bound" in events
@@ -1868,9 +1917,10 @@ async def test_attach_is_reference_not_found_when_the_picker_lists_no_such_name(
 
     monkeypatch.setattr(migrated_composer, "FRAME_PICKER_OPEN_S", 0.1)
     page = FakePage()
-    page.dom.picker_options = ["Blue sphere on table"]  # the upload never listed
+    page.dom.picker_options = ["Blue sphere on table"]
+    page.dom.picker_lists_upload = False  # the upload never listed
     path = _png(tmp_path)
-    with pytest.raises(ReferenceNotFoundError, match=re.escape(path.name)):
+    with pytest.raises(ReferenceNotFoundError, match=re.escape(path.stem)):
         await MigratedComposer().attach_start_frame(page, PROJ, path)
     assert EXIT_CODE_MAP[ReferenceNotFoundError] == 32
     assert page.dom.picked == [] and not page.dom.chip_bound
@@ -1887,7 +1937,8 @@ async def test_attach_is_selector_drift_when_the_chip_stays_empty_after_the_pick
     page.dom.chip_binds = False
     with pytest.raises(UiSelectorDriftError, match="chip"):
         await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path))
-    assert page.dom.picked == ["01-pre-submit.png"]  # the pick happened; the bind did not
+    # The run-unique upload name, not the caller's — the pick happened; the bind did not.
+    assert page.dom.picked == [PurePath(page.dom.chosen_files[0]).name]
 
 
 async def test_attach_searches_again_when_the_upload_is_not_indexed_yet(
@@ -1922,14 +1973,30 @@ async def test_attach_gives_up_after_the_search_attempts(
     assert page.dom.picker_searches == migrated_composer.FRAME_SEARCH_ATTEMPTS
 
 
-async def test_attach_picks_the_first_option_when_names_repeat(tmp_path: Path) -> None:
+async def test_attach_binds_its_own_upload_when_look_alikes_are_already_listed(
+    tmp_path: Path,
+) -> None:
+    """The library is full of same-named assets from earlier runs; bind OURS.
+
+    This replaces a "picks the first option when names repeat" test. That behaviour was
+    a coping strategy: uploads used the caller's file name, so a second run of the same
+    file listed two identical entries and the search bound whichever came first — which
+    could be the older asset, putting a stale media id in the submit body and spending
+    credits on the wrong image. The upload is now a run-unique copy, so the premise
+    cannot arise for our own uploads, and the guarantee worth pinning is the stronger
+    one: pre-existing look-alikes do not match, because our query is unique to this run.
+    """
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
     page = FakePage()
     name = "01-pre-submit.png"
-    page.dom.picker_options = [name, name, "Blue sphere on table"]  # two uploads of one file
+    # Two look-alikes from earlier runs, listed BEFORE ours.
+    page.dom.picker_options = [name, name, "Blue sphere on table"]
     media_id = await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path, name))
-    assert media_id == MEDIA_UP and page.dom.picked == [name]
+    uploaded = PurePath(page.dom.chosen_files[0]).name
+    assert media_id == MEDIA_UP
+    assert uploaded not in (name, "Blue sphere on table")
+    assert page.dom.picked == [uploaded], "bound a look-alike instead of this run's upload"
 
 
 def _i2v_body(media_id: str = MEDIA_UP, key: str = "veo_3_1_i2v_lite") -> str:

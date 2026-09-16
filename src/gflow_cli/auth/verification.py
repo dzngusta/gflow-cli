@@ -321,6 +321,24 @@ async def verify_flow_session(
     return result
 
 
+#: The migrated-host fallback probe. `myaccount` is the oracle because it is
+#: server-side: a revoked session is redirected off it, which a client-rendered page
+#: cannot attest to.
+_MYACCOUNT_ORIGIN = "https://myaccount.google.com"
+_MYACCOUNT_URL = f"{_MYACCOUNT_ORIGIN}/?hl=en"
+#: 15 s was measured too tight: the probe answers in 2.6-7.2 s idle but timed out under
+#: browser contention during a 10-profile sweep.
+_MIGRATED_PROBE_TIMEOUT_MS = 30_000
+
+
+def _origin_of(url: str) -> str:
+    """Scheme + host only — never log a URL with a query string from an auth page."""
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}" if parts.scheme else "(unparseable)"
+
+
 async def _verify_migrated_host_fallback(
     profile_dir: Path, source: str
 ) -> FlowSessionStatus | None:
@@ -354,19 +372,15 @@ async def _verify_migrated_host_fallback(
             try:
                 cookies = await ctx.cookies()
                 names = {(c.get("name"), c.get("domain", "")) for c in cookies}
-                has_sso = any(
-                    n == "SAPISID" and "google.com" in d for n, d in names
-                )
+                has_sso = any(n == "SAPISID" and "google.com" in d for n, d in names)
                 has_flow_osid = any(
-                    n in ("__Secure-OSID", "OSID") and "flow.google.com" in d
-                    for n, d in names
+                    n in ("__Secure-OSID", "OSID") and "flow.google.com" in d for n, d in names
                 )
                 if not (has_sso and has_flow_osid):
                     return None
-                resp = await ctx.request.get(
-                    "https://myaccount.google.com/?hl=en", timeout=15_000
-                )
+                resp = await ctx.request.get(_MYACCOUNT_URL, timeout=_MIGRATED_PROBE_TIMEOUT_MS)
                 page_body = await resp.text()
+                final_url = str(resp.url)
             finally:
                 await ctx.close()
     except Exception as exc:
@@ -375,15 +389,28 @@ async def _verify_migrated_host_fallback(
         )
         return None
 
-    match = re.search(r"[\w.+-]+@[\w-]*\.?gmail\.com", page_body)
-    if not match:
+    # THE auth signal, and it is server-attested: a dead or revoked session cannot stay
+    # on myaccount — Google redirects it to the sign-in page. Checking where we landed
+    # is therefore the decision; the address below is only a label.
+    #
+    # The address must NOT be the decision. It used to be, via an `@gmail.com`-only
+    # regex, which silently declined every Google Workspace account (measured:
+    # `dev@axelate.io`, `user@mycompany.com`, even `user@googlemail.com` all failed to
+    # match) — so #791 stayed open for them with no signal that the fallback had
+    # refused. Widening that regex alone would have been worse: any address on a
+    # signed-out page would then read as proof of a session.
+    if not final_url.startswith(_MYACCOUNT_ORIGIN):
         logger.warning(
-            "auth_migrated_fallback_no_email", source=source
+            "auth_migrated_fallback_not_signed_in", source=source, landed=_origin_of(final_url)
         )
         return None
+
+    match = re.search(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", page_body)
     return FlowSessionStatus(
         outcome=FlowSessionOutcome.AUTHENTICATED,
-        user_email=match.group(0),
+        # Absent when the page shape changes — the session is still proven by the URL,
+        # so a missing label must not cost the user their login.
+        user_email=match.group(0) if match else None,
         source=source,
     )
 

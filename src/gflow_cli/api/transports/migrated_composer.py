@@ -182,6 +182,15 @@ BOUND_CHIP = "flow-prompt-box button.chip-container:has(img)"
 PICKER = "flow-add-menu-popover-content"
 PICKER_SEARCH = "input[type='text']"
 PICKER_OPTION = "button.asset-item[role='option']"
+#: The picker's detail pane, and the confirm button inside it. Anchored on the custom
+#: element because the button's LABEL IS LOCALISED ("Add to prompt" in en) and AGENTS.md
+#: forbids text-label selectors here outright — a `has-text` anchor silently never matches
+#: on a non-English UI, leaving the overlay up and raising UiSelectorDriftError on every
+#: i2v, which is the failure this confirm exists to prevent.
+#: Measured 2026-09-05: "a `flow-add-menu-detail-pane` with an 'Add to prompt' button"
+#: (docs/superpowers/spikes/2026-09-05-migrated-frames-attach.md, Q2).
+PICKER_DETAIL_PANE = "flow-add-menu-detail-pane"
+PICKER_CONFIRM = f"{PICKER_DETAIL_PANE} button"
 #: The Ingredients sub-mode holds references; Frames holds the i2v chips.
 INGREDIENTS_LIGATURE = "chrome_extension"
 #: The only duration at which this host offers reference-to-video. Measured 2026-09-06 at
@@ -1764,21 +1773,25 @@ class MigratedComposer:
                 # "the picker never listed it", and must not be reported as one.
                 await options.first.click(timeout=4000)
                 # ai4u delta (2026-09-12): Flow's picker no longer auto-closes on pick —
-                # it now requires an explicit confirm button ("Add to prompt" in en).
-                # Without clicking it the overlay stays up and the wait-for-hidden below
-                # raised UiSelectorDriftError on every i2v (observed 5/5 on a migrated
-                # account; landscape t2v unaffected — no picker). Grace-wait, confirm if
-                # the picker is still up, else fall through to the auto-close wait.
+                # it now requires an explicit confirm button. Without clicking it the
+                # overlay stays up and the wait-for-hidden below raised
+                # UiSelectorDriftError on every i2v (observed 5/5 on a migrated account;
+                # landscape t2v unaffected — no picker). Grace-wait, confirm if the picker
+                # is still up, else fall through to the auto-close wait.
+                #
+                # Scoped to THIS picker, not the page: a detached earlier overlay would
+                # otherwise offer a stale confirm. Structural anchor, never the label.
                 try:
                     await page.wait_for_timeout(1200)
                     if await picker.is_visible():
-                        confirm = page.locator(
-                            "button:has-text('Add to prompt')"
-                        ).first
+                        confirm = picker.locator(PICKER_CONFIRM).last
                         await confirm.wait_for(state="visible", timeout=3000)
                         await confirm.click(timeout=3000)
-                except Exception:
-                    pass  # auto-close variant, or confirm already gone — wait below decides
+                except PlaywrightTimeoutError:
+                    # The auto-close variant, or the confirm already gone. Both are fine —
+                    # the wait-for-hidden below is the real gate. Logged rather than
+                    # swallowed so a picker that stays up has a breadcrumb explaining why.
+                    log.info("migrated.frame_picker_confirm_absent")
                 break
         try:
             # Re-queried, and `.last` like the open: the picker overlay is detached

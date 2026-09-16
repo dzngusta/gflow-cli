@@ -647,3 +647,139 @@ class TestVerifyFlowSessionEngineDowngrade:
         assert status.outcome is FlowSessionOutcome.VERIFICATION_ERROR
         mock_ap.return_value.__aenter__.assert_not_awaited()
         mock_ctx.cookies.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# _verify_migrated_host_fallback — the migrated-host session oracle (#791)
+# ---------------------------------------------------------------------------
+
+
+def _migrated_mock(
+    *,
+    cookies: list[dict] | None = None,
+    final_url: str = "https://myaccount.google.com/?hl=en",
+    body: str = "<div>someone@gmail.com</div>",
+    get_side_effect: object = None,
+) -> MagicMock:
+    """A persistent context whose `request.get` reports BOTH a body and a final URL.
+
+    The URL is the part that matters: it is the server-attested half of the oracle.
+    `_build_verify_mock` predates that and sets no `.url`, so this cannot reuse it.
+    """
+    if cookies is None:
+        cookies = [
+            {"name": "SAPISID", "domain": ".google.com"},
+            {"name": "__Secure-OSID", "domain": ".flow.google.com"},
+        ]
+    resp = MagicMock(name="resp")
+    resp.status = 200
+    resp.url = final_url
+    resp.text = AsyncMock(return_value=body)
+
+    request = MagicMock(name="request")
+    request.get = (
+        AsyncMock(side_effect=get_side_effect)
+        if get_side_effect is not None
+        else AsyncMock(return_value=resp)
+    )
+
+    ctx = MagicMock(name="ctx")
+    ctx.cookies = AsyncMock(return_value=cookies)
+    ctx.request = request
+    ctx.close = AsyncMock()
+
+    pw = MagicMock(name="pw")
+    pw.chromium.launch_persistent_context = AsyncMock(return_value=ctx)
+    cm = MagicMock(name="cm")
+    cm.__aenter__ = AsyncMock(return_value=pw)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    return MagicMock(name="async_playwright", return_value=cm)
+
+
+class TestMigratedHostFallback:
+    """#791: labs never mints a session for some migrated accounts.
+
+    The whole point of this probe is to upgrade a usable workspace out of
+    GOOGLE_SESSION_ONLY. Every case below is about NOT upgrading something that
+    should not be — an oracle that says yes too easily is worse than none.
+    """
+
+    @staticmethod
+    def _patch(monkeypatch: pytest.MonkeyPatch, mock_ap: MagicMock) -> None:
+        monkeypatch.setattr("gflow_cli.auth.strategies.async_playwright", mock_ap)
+
+    @pytest.mark.asyncio
+    async def test_a_workspace_address_authenticates(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The regression that shipped: an `@gmail.com`-only pattern declined these.
+
+        Measured against the old expression — `dev@axelate.io`, `user@mycompany.com`
+        and even `user@googlemail.com` all failed to match, so #791 stayed open for
+        every Google Workspace account with no signal that the fallback had refused.
+        """
+        from gflow_cli.auth.verification import _verify_migrated_host_fallback
+
+        self._patch(monkeypatch, _migrated_mock(body="<b>dev@axelate.io</b>"))
+        result = await _verify_migrated_host_fallback(tmp_path, "t")
+        assert result is not None, "a Workspace account must not be declined"
+        assert result.user_email == "dev@axelate.io"
+
+    @pytest.mark.asyncio
+    async def test_a_redirect_off_myaccount_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A revoked session is redirected to sign-in — and cookies outlive revocation.
+
+        This is the case the cookie check alone cannot catch: the jar on disk survives a
+        password change or a "sign out of all devices", so cookie presence is a gate,
+        never a proof. The landing URL is what the server actually attests.
+        """
+        from gflow_cli.auth.verification import _verify_migrated_host_fallback
+
+        self._patch(
+            monkeypatch,
+            _migrated_mock(
+                final_url="https://accounts.google.com/v3/signin/identifier?continue=...",
+                # The sign-in page carries addresses too; body content must not save it.
+                body="<a>support@google.com</a>",
+            ),
+        )
+        assert await _verify_migrated_host_fallback(tmp_path, "t") is None
+
+    @pytest.mark.asyncio
+    async def test_a_missing_address_still_authenticates_without_a_label(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The URL proves the session; the address is only a display label.
+
+        If Google reshapes the page, the user must not lose their login over a cosmetic
+        field — which is exactly what making the address the decision would cost them.
+        """
+        from gflow_cli.auth.verification import _verify_migrated_host_fallback
+
+        self._patch(monkeypatch, _migrated_mock(body="<div>no address here</div>"))
+        result = await _verify_migrated_host_fallback(tmp_path, "t")
+        assert result is not None
+        assert result.user_email is None
+
+    @pytest.mark.asyncio
+    async def test_no_flow_cookie_refuses_before_any_request(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Four of five local profiles reproducing #791 look exactly like this."""
+        from gflow_cli.auth.verification import _verify_migrated_host_fallback
+
+        mock_ap = _migrated_mock(cookies=[{"name": "SAPISID", "domain": ".google.com"}])
+        self._patch(monkeypatch, mock_ap)
+        assert await _verify_migrated_host_fallback(tmp_path, "t") is None
+
+    @pytest.mark.asyncio
+    async def test_a_probe_that_cannot_run_never_upgrades(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Fail-closed. A 15 s budget really did time out under browser contention."""
+        from gflow_cli.auth.verification import _verify_migrated_host_fallback
+
+        self._patch(monkeypatch, _migrated_mock(get_side_effect=TimeoutError("slow")))
+        assert await _verify_migrated_host_fallback(tmp_path, "t") is None

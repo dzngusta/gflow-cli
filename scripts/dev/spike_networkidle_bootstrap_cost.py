@@ -134,8 +134,14 @@ async def main() -> int:
     profile_dir = resolve_profile_dir(args.profile)
     from playwright.async_api import async_playwright
 
+    from gflow_cli.profile_lease import ProfileLease
+
     results: list[dict[str, Any]] = []
-    async with async_playwright() as pw:
+    # Own the profile before Chrome launches, exactly as setup_own_context does.
+    # Without it a concurrent gflow run opens a SECOND browser on the same profile
+    # instead of getting ProfileLockedError — and this probe's whole point is to
+    # measure the production launch, so it has to take the production lock too.
+    async with ProfileLease(profile_dir), async_playwright() as pw:
         for rnd in range(1, args.rounds + 1):
             # Alternate so a warm cache cannot systematically favour one arm.
             arms = ["A_domcontentloaded", "B_networkidle"]

@@ -115,8 +115,33 @@ This branch now contains all of `develop` (⊇ `main`) plus your release prep. A
 release prep commits live here; the PR into `main` (step 14) carries the full
 integration history forward.
 
-**6. Bump the shared release version** in `pyproject.toml`,
-`.codex-plugin/plugin.json` and `plugins/gflow/.claude-plugin/plugin.json`:
+**6. Bump the shared release version — SEVEN sites, and no single gate sees them all.**
+
+This is the canonical list. It is the only one that spans all three gates; the previous
+version of this step named four sites, `check_repo_hygiene.py`'s docstring named three,
+and its own function checked five. A release engineer then met each omission as a gate
+failure mid-release (#839). **If you add a version site, add it here.**
+
+| # | Site | Caught by |
+|---|---|---|
+| 1 | `pyproject.toml` `[project].version` | `check_repo_hygiene._check_version_agreement` |
+| 2 | `src/gflow_cli/__init__.py` `__version__` | same |
+| 3 | `.codex-plugin/plugin.json` `"version"` | same |
+| 4 | `uv.lock` (the `gflow-cli` package block) | same — re-resolved by `uv lock` |
+| 5 | `server.json` `.version` **and** `.packages[*].version` (twice) | same |
+| 6 | `plugins/gflow/.claude-plugin/plugin.json` `"version"` | `tests/test_plugin_manifests.py::test_plugin_version_tracks_pyproject` |
+| 7 | `docker/Dockerfile` `ARG GFLOW_VERSION` | `tests/test_dockerfile_version_pin.py` |
+
+`server.json` is the one that bites quietly: it is the MCP Registry's copy of our
+metadata, and the registry publish carries whatever the ref says. Forget it and the
+listing points at a superseded version with nothing downstream noticing.
+
+**Do not bulk-replace the old version across the repo.** `docker/README.md` quotes
+measured results (`gflow_cli : <version>`, `✅ measured`); rewriting those turns a
+record of what was tested into a false claim. Bump declaration sites only — the seven
+above — and leave measurement records alone unless the measurement was re-run.
+
+Sites 1–3 and 6:
 
 ```toml
 [project]
@@ -187,7 +212,10 @@ will fail the gate.
 **11. Commit the release prep.**
 
 ```bash
-git add pyproject.toml .codex-plugin/plugin.json src/gflow_cli/__init__.py uv.lock CHANGELOG.md
+# All seven version sites from step 6 — a bumped-but-unstaged site fails the gate
+# on the release branch, after the tag is already in your fingers.
+git add pyproject.toml .codex-plugin/plugin.json plugins/gflow/.claude-plugin/plugin.json
+git add src/gflow_cli/__init__.py uv.lock server.json docker/Dockerfile CHANGELOG.md
 git add docs/PROJECT_STATUS.md                 # step 9b — enforced by check_release_artifacts
 git add docs/ website/docs/ skills/ .claude/commands/gflow/   # include any doc-review + mirror fixes
 # doc-review version-currency fixes often also touch ROOT docs — stage them too:
@@ -200,6 +228,8 @@ git commit -m "chore(release): v<NEW_VERSION>"
   pinned in the lockfile) — it is easy to forget and must ship in this commit.
 - **`.codex-plugin/plugin.json` tracks the package version** so marketplace installs
   receive a new cache path for every release.
+- **`server.json` carries the version TWICE** — top level and inside the PyPI package
+  entry. `_check_version_agreement` checks both; a half-bump fails the gate.
 - The release-prep commit must NOT carry a `Co-Authored-By` trailer (see reminders).
 
 **12. Tag the release commit.** Use `-s` for a signed annotated tag so GitHub shows **"Verified"** AND `.github/workflows/release.yml` passes the signed-tag gate (unsigned or lightweight tags are rejected by CI).

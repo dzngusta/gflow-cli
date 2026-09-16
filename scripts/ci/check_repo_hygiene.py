@@ -7,10 +7,17 @@ Fails (exit 1) if:
      planning / review / session artefact at the repo root).
   3. Any Python file in src/, tests/, or scripts/ contains hardcoded Windows absolute paths
      or writes output to test_assets/ instead of tmp/.
-  4. The three declared versions disagree: pyproject.toml [project].version,
-     src/gflow_cli/__init__.py __version__, and .codex-plugin/plugin.json
-     "version" must be identical (a release bumping one but not the others
-     ships a self-contradictory artefact).
+  4. The declared versions disagree. `_check_version_agreement` is the authority on
+     which files those are and is the ONLY list that should be trusted — do not restate
+     it here. It previously said "three" while the function checked five files and six
+     occurrences, and `skills/release/SKILL.md` named a different set again; a release
+     engineer then met each missing site as a gate failure at the point of highest
+     pressure (#839). Two lists that disagree means the shorter one is silently wrong.
+
+     Note this gate is not the whole story either: `plugins/gflow/.claude-plugin/
+     plugin.json` is pinned by tests/test_plugin_manifests.py and `docker/Dockerfile`'s
+     ARG by tests/test_dockerfile_version_pin.py. skills/release/SKILL.md step 6 carries
+     the one list that spans all three gates.
 
 Run manually:
     uv run python scripts/ci/check_repo_hygiene.py

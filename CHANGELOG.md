@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The MCP Registry publish never ran — not once, on any release that shipped with it.**
+  `mcp-registry.yml` triggered on `release: published`, but `release.yml` creates the Release
+  with the default `GITHUB_TOKEN`, and GitHub starts no workflow runs from
+  `GITHUB_TOKEN`-created events. Measured on v0.76.0: a real Release published
+  (`draft=false`, `prerelease=false`), the workflow file on the default branch, and
+  `gh run list --workflow=mcp-registry.yml` returning **zero runs, ever**. The trigger was
+  structurally dead rather than mistimed, so it would not have begun working at the next
+  release. `release.yml` now **calls** the workflow (`uses:` + `needs: build-and-publish`)
+  instead of relying on an event, so there is nothing for the token rule to block. A
+  user-owned PAT on the Release step was the alternative and was rejected on maintenance
+  grounds: fine-grained tokens expire after at most 366 days, which puts a scheduled failure
+  on a path that runs a handful of times a year. `needs:` also enforces the ordering
+  `mcp-publisher` requires — it reads the `mcp-name:` token from the *published* PyPI README —
+  which previously rested on two files agreeing about step order. Registry authentication is
+  unchanged: GitHub Actions OIDC, with no token stored for or handed to the registry.
+  ([#841](https://github.com/ffroliva/gflow-cli/issues/841))
+- **A manual registry dispatch could publish a superseded version, green, with nothing
+  noticing.** A dispatch publishes whatever `server.json` says *on the dispatched ref*.
+  Dispatching `develop` after the v0.76.0 tag but before the back-merge landed republished
+  `0.75.0` to the registry, and the run succeeded. Both triggers now take a required `version`
+  input, asserted against every version field in `server.json`, and fail the run on a
+  mismatch instead of publishing. ([#841](https://github.com/ffroliva/gflow-cli/issues/841))
+- **A pre-release would have become the MCP Registry's *active* listing.** `release.yml` fires
+  on every `v*.*.*` tag, including `v1.2.3rc1`, and that listing is what PulseMCP and GitHub's
+  MCP gallery ingest. While the publish was dead this was latent; repairing it would have
+  armed it. The call is now skipped for pre-releases, and the workflow refuses a pre-release
+  version outright if one reaches it by hand. The prerelease classification has a single
+  definition shared by the GitHub Release flag and the registry gate, rather than two copies
+  of the same expression that would drift. Found by council review, not in production.
+  ([#841](https://github.com/ffroliva/gflow-cli/issues/841))
+
 ## [0.76.0] — 2026-09-16
 
 ### Fixed

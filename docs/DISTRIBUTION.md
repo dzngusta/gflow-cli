@@ -24,7 +24,7 @@ channel no longer accepts anything).
 | Channel | Audience | Submit via | Status | Last verified |
 |---|---|---|---|---|
 | [PyPI](https://pypi.org/project/gflow-cli/) | Python users, every downstream scraper | `uv publish` (release) | listed | 2026-09-14 |
-| [Official MCP Registry](https://registry.modelcontextprotocol.io) | Agent devs; feeds other registries | `mcp-publisher` workflow, **manual dispatch for now** (#829, #841) | **listed** · `0.76.0` active · the `release: published` trigger does NOT fire ([#841](https://github.com/ffroliva/gflow-cli/issues/841)) | 2026-09-16 |
+| [Official MCP Registry](https://registry.modelcontextprotocol.io) | Agent devs; feeds other registries | `mcp-publisher`, called by `release.yml` (#829; wiring repaired in #841) | **listed** · `0.76.0` active · automation repaired but **not yet exercised** — v0.77.0 is its first real run | 2026-09-16 |
 | [Glama](https://glama.ai/mcp/servers/ffroliva/gflow-cli) | Broad MCP audience (87k servers) | Web form | **listed** · claimed · rated **A** · release **0.75.0** published · Auto-Release on | 2026-09-15 |
 | [MCP Market](https://mcpmarket.com/server/gflow-cli) | Consumer discovery | — (crawled us) | **listed** | 2026-09-14 |
 | [skills.sh](https://skills.sh/ffroliva/gflow-cli) | Cross-agent skill users | — (telemetry) | **listed** | 2026-09-14 |
@@ -55,29 +55,46 @@ channel no longer accepts anything).
 Ranked by reach per hour of work. The eight submissions are out; what is left is gated on one
 thing, and it is not a distribution task.
 
-> ⚠️ **The automation does not fire yet — v0.76.0 was published by hand.** `mcp-registry.yml`
-> triggers on `release: published`, but `release.yml` creates the Release with the default
-> `GITHUB_TOKEN`, and GitHub does not start workflow runs from `GITHUB_TOKEN`-created events.
-> Measured on v0.76.0: a real Release was published and the workflow had **zero runs, ever**
-> ([#841](https://github.com/ffroliva/gflow-cli/issues/841)).
+> ⚠️ **Repaired in #841, and v0.77.0 is the first release that will actually test it.**
+> For every release through v0.76.0 the registry publish never fired. It hung off
+> `release: published`, but `release.yml` creates the Release with the default
+> `GITHUB_TOKEN`, and GitHub starts no workflow runs from `GITHUB_TOKEN`-created events.
+> Measured on v0.76.0 — a real Release published, and the workflow had **zero runs, ever**
+> ([#841](https://github.com/ffroliva/gflow-cli/issues/841)). v0.76.0 was published by hand.
 >
-> Until that is fixed the sequence is **tag → release → back-merge → `gh workflow run
-> mcp-registry.yml --ref develop`**, and the order matters: `workflow_dispatch` publishes
-> whatever `server.json` says **on the dispatched ref**, so dispatching before the back-merge
-> republishes the *previous* version — silently, with a green run. That happened on v0.76.0
-> and was corrected by re-dispatching afterwards.
+> **It is now called, not triggered.** `release.yml` invokes `mcp-registry.yml` directly
+> (`uses:` + `needs: build-and-publish`). No event, so nothing for the token rule to block —
+> and no credential to rotate. A user PAT was the other way to fix it and was rejected on
+> maintenance grounds: a 366-day expiry on a path that runs a few times a year is another
+> scheduled silent-ish failure, which is the shape of the bug being fixed.
+>
+> `needs:` is also what enforces the ordering — `mcp-publisher` reads the `mcp-name:` token
+> from the **published** PyPI README, so the wheel must be up first. And the call runs
+> against the release **tag**, so the wrong-ref hazard below cannot arise on this path.
+>
+> **Pre-releases are excluded.** `release.yml` fires on every `v*.*.*` tag including
+> `v1.2.3rc1`, and an `rc` must never become the registry's *active* listing — the one
+> PulseMCP and GitHub's MCP gallery ingest. The call is skipped for them, and the workflow
+> refuses a pre-release version outright if one ever reaches it by hand.
+>
+> **The manual path remains, and its ordering hazard is unchanged.** `gh workflow run
+> mcp-registry.yml --ref <ref> -f version=X.Y.Z` publishes whatever `server.json` says **on
+> that ref**, so dispatching `develop` before the release back-merge lands republishes the
+> *previous* version. That happened on v0.76.0. The `version` input is now required and
+> asserted against `server.json`, so the mismatch fails the run instead of publishing green.
 
 1. **Publish to the Official MCP Registry** — the one that feeds the others (PulseMCP ingests it;
-   GitHub's gallery is built on it). **v0.75.0 is the release that unblocks it**, and this document
+   GitHub's gallery is built on it). **v0.75.0 was the release that unblocked it**, and this document
    ships in it: PyPI metadata is frozen per release, so the rewritten summary, the three sidebar
    links and the ten classifiers take effect on that upload, and `mcp-publisher` can only verify
    ownership once the `mcp-name:` token is in the *published* README.
 
-   **This is now automated.** `.github/workflows/mcp-registry.yml` runs on `release: published`,
-   which fires after `release.yml` has uploaded the wheel, and authenticates with GitHub Actions
-   OIDC — no PAT, no device-code flow, no human step. It becomes live once it reaches the default
-   branch at the next release; `v0.75.0` itself therefore still needed either one manual publish or
-   the arrival of `v0.76.0`.
+   **This is automated as of #841** — it was not before, and v0.76.0 went out by hand.
+   `release.yml` calls `.github/workflows/mcp-registry.yml` as a reusable workflow, with
+   `needs: build-and-publish` so it runs after the wheel is on PyPI, and it authenticates to
+   the registry with GitHub Actions OIDC — **no token is stored for, or handed to, the
+   registry, and none is needed to trigger it.** The call runs against the release tag, so the
+   publish always carries the released `server.json`.
 2. **Check Glama after the next release.** The Dockerfile is built and 0.75.0 is released, which
    met punkpeye's Glama gate. Auto-Release is meant to publish each GitHub release by itself, but
    it has never fired for us yet, and an unpinned build has already used a commit hours out of
@@ -119,7 +136,7 @@ Absolutising them fixes it, but `scripts/ci/check_doc_links.py` validates relati
 disk and would stop checking them — so the fix is absolutise **plus** teach the checker to map our
 own `blob/main/` URLs back to paths. Tracked, not done here.
 
-### Official MCP Registry — submit as soon as v0.75.0 is on PyPI
+### Official MCP Registry — listed since v0.75.0, automated since #841
 
 Schema `2025-12-11`, read live. `ServerDetail` requires `name`, `description`, `version`;
 `description` is capped at **100 characters**; `name` must match `^[a-zA-Z0-9.-]+/[a-zA-Z0-9._-]+$`
@@ -143,9 +160,11 @@ so `uvx gflow-cli mcp run` works — which is also what a user types first, the 
 just installed.
 
 Publishing runs in CI: `.github/workflows/mcp-registry.yml`, on `release: published` (plus
-`workflow_dispatch` for a re-run). It authenticates with **GitHub Actions OIDC**, so no personal
-access token is ever created or handed to the registry, and the `mcp-publisher` download is pinned
-by version *and* sha256 because that job holds `id-token: write`.
+`workflow_dispatch -f version=X.Y.Z` for a re-run). It authenticates with **GitHub Actions OIDC**,
+so **no token is ever handed to the registry**, and the `mcp-publisher` download is pinned by
+version *and* sha256 because that job holds `id-token: write`. **No personal access token is
+involved anywhere in this path** — not for the registry, and not to start the workflow: it is
+called by `release.yml` rather than triggered by an event (#841).
 
 The equivalent by hand, if you ever need it locally:
 

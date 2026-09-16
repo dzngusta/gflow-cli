@@ -1519,9 +1519,30 @@ points at the venv's python — so `gflow update` reports it as upgraded with a
 note quoting the manager's exit code; the next update from another shell
 refreshes the launcher.
 
-Restart any running `gflow serve` / MCP server afterwards; a long-lived process
-keeps the old code until it restarts. There is deliberately no MCP twin of this
-command: a server must not replace its own code underneath itself.
+**Stop every other `gflow` process BEFORE you upgrade — not after.** On Windows a
+running `gflow` holds files inside the install open, and a package manager that
+cannot replace them can abort part-way and leave the environment broken. The
+holder people actually hit is **`gflow mcp run`**: an editor that has gflow
+registered as an MCP server starts one per session, they are long-lived, and
+there is usually more than one. Reported with a reproduction in
+[#848](https://github.com/ffroliva/gflow-cli/issues/848): `uv tool install
+--force` failed with *"Access is denied"* on `…\uv\tools\gflow-cli\Scripts`
+and left the install answering `No module named 'gflow_cli'` until those
+processes were stopped and the install re-run.
+
+Close the editor sessions (or stop the servers) first, and on Windows check with
+`tasklist | findstr gflow` — `pgrep -f gflow` elsewhere. `gflow update` cannot
+do this for you: it is itself one of those processes, so refusing to run while
+any gflow holds the install would refuse every time.
+
+If an upgrade does abort, `gflow update` tells you rather than reporting a
+version: it imports gflow-cli in a fresh isolated interpreter afterwards, and a
+failed import exits 11 with a **forced reinstall** as the remediation. Run that
+from a shell with no gflow running.
+
+Restart any running `gflow serve` / MCP server afterwards too; a long-lived
+process keeps the old code until it restarts. There is deliberately no MCP twin
+of this command: a server must not replace its own code underneath itself.
 
 Every command also prints an **update banner** on stderr (a one-line notice when
 stderr is not a terminal) when a newer release is known — see

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.76.0] — 2026-09-16
+
 ### Fixed
 
 - **The containerised sign-in now works on Windows, and no longer points at a service that
@@ -5199,7 +5201,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.75.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.76.0...HEAD
+[0.76.0]: https://github.com/ffroliva/gflow-cli/compare/v0.75.0...v0.76.0
 [0.75.0]: https://github.com/ffroliva/gflow-cli/compare/v0.74.0...v0.75.0
 [0.74.0]: https://github.com/ffroliva/gflow-cli/compare/v0.73.2...v0.74.0
 [0.73.2]: https://github.com/ffroliva/gflow-cli/compare/v0.73.1...v0.73.2

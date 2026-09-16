@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The sign-in window never closed for an account Google serves from `flow.google.com`.**
+  `gflow auth login --browser chrome` watches the `labs.google` session endpoint to know
+  when to close Chrome — and for a migrated account labs hands off without ever minting a
+  session, so the one oracle the detector had could not answer. The window stayed open for
+  the full 600 s while the banner promised gflow would close it, and the timeout then
+  propagated *past* verification, so a sign-in that had completed perfectly was discarded
+  unread and the user got exit 12 for a login that worked. It is the first thing a new user
+  on a migrated account meets. v0.77.0 fixed the *verification* for these accounts, which
+  made the outcome correct only for users who closed the window themselves.
+
+  Two changes, and neither of them moves the authentication decision into a cookie. gflow
+  now also stops waiting when the jar carries both halves of a migrated session (the
+  `.google.com` SSO cookie **and** the `flow.google.com` app-session cookie) — that ends a
+  wait which had no other way to end; `verify_flow_profile` still asks a server about what
+  landed on disk, and is still the only thing that can call a login successful. And a
+  timeout no longer discards the profile unread: gflow reads it before failing, reports a
+  sign-in the detector missed as the success it is, and otherwise keeps the timeout's own
+  wording. A caller with no on-disk oracle to fall back on (`--browser internal`) keeps
+  waiting exactly as before. ([#849](https://github.com/ffroliva/gflow-cli/issues/849))
 - **`gflow update` could report a version for an install that no longer starts.** A package
   manager replaces files in place, so an interrupted upgrade leaves a venv whose *metadata*
   reads perfectly and whose *imports* are dead. `gflow update` only ever re-read the version,
@@ -1531,7 +1550,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-
 - **v0.66.1's migrated-origin fast-fail never fired on a real run
   ([#639](https://github.com/ffroliva/gflow-cli/issues/639)).** The guard read `page.url` once,
   at `get_ui_driver` entry — but `routes.project_editor_url` only ever builds a `labs.google`
@@ -1845,7 +1863,6 @@ completed exit 0, proving no regression. See
   `recaptchaToken` but not `sessionId`, which the extend request carries. Not a
   credential, but account-correlatable, and it would otherwise reach any logged
   request body or diagnostics bundle verbatim.
-
 
 - **The offline test suite could `git checkout develop` in the developer's own
   clone ([#605](https://github.com/ffroliva/gflow-cli/issues/605)).** git's
@@ -2486,7 +2503,6 @@ completed exit 0, proving no regression. See
 - **Remaining in-workflow package installs pinned (Scorecard Pinned-Dependencies).** The Pages build now installs MkDocs Material with `pip install --require-hashes` from a compiled `website/requirements.txt`; the PR-triage sandbox image (`Dockerfile.triage`) pins its Node base by digest and installs the Claude Code CLI via `npm ci` from a committed lockfile instead of a floating `npm install -g`; the CI dependency audit pins its `pip-audit` tool version (the non-gating weekly `deps-watch` job deliberately keeps a floating pip-audit — fresh advisory tooling is its purpose). New dependabot entries (uv / npm / docker) keep all three sets of pins fresh. The remaining deliberate won't-fix Scorecard alerts (SAST, Fuzzing, CII Best Practices) are dismissed on the repo with recorded reasons.
 - **OpenSSF Scorecard self-run.** A new SHA-pinned `scorecard.yml` workflow (weekly + on push to `develop`) runs the OpenSSF Scorecard supply-chain checks with `publish_results: true`, feeding the public API/badge and the repo Security tab — enabled deliberately after the permissions/pinning hardening so the first published score reflects the hardened state. The score surfaces as a badge in the README and on the website index page, with a docs/SECURITY.md section explaining what it measures; `release.yml`/`pages.yml` write scopes moved from workflow level to the jobs that need them.
 
-
 ## [0.56.0] — 2026-08-13
 
 ### Added
@@ -2579,10 +2595,6 @@ completed exit 0, proving no regression. See
 ### Fixed
 
 - **Fix video duration selector drift (#451).** Expanded duration control selector cascade to match modern Flow editor UI elements (`button`, `role='button'`, `role='option'`, `role='menuitem'`, `role='tab'`) while preserving fail-closed behavior on missing duration controls.
-
-
-
-
 
 ## [0.51.0] — 2026-08-05
 
@@ -3615,7 +3627,6 @@ completed exit 0, proving no regression. See
     daemon's cached settings instead of re-reading `.env` files live per task, so a
     mid-run edit to the home `.env` can no longer produce a task whose client config
     disagrees with the parameters the task derived from `get_settings()`.
-
 
 ## [0.24.0] — 2026-07-01
 
@@ -4874,8 +4885,6 @@ completed exit 0, proving no regression. See
   `real_chrome.py`, `strategies.py`.
 - `gflow auth login` now prints the launch strategy announcement before opening
   any browser window.
-
-
 
 > **Shell-friendly multi-prompt `t2i` + performance hardening.** This release 
 > promotes `gflow image t2i` to a variadic command that can consume multiple 

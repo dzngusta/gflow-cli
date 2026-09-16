@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from collections import Counter
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, cast
@@ -325,6 +326,10 @@ async def verify_flow_session(
 #: server-side: a revoked session is redirected off it, which a client-rendered page
 #: cannot attest to.
 _MYACCOUNT_ORIGIN = "https://myaccount.google.com"
+#: Any domain, not just gmail.com — an `@gmail.com`-only pattern declined every
+#: Google Workspace account (dev@axelate.io, user@mycompany.com, user@googlemail.com
+#: all failed to match), leaving #791 open for them with no signal it had refused.
+_EMAIL_RE = r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}"
 _MYACCOUNT_URL = f"{_MYACCOUNT_ORIGIN}/?hl=en"
 #: 15 s was measured too tight: the probe answers in 2.6-7.2 s idle but timed out under
 #: browser contention during a 10-profile sweep.
@@ -405,12 +410,19 @@ async def _verify_migrated_host_fallback(
         )
         return None
 
-    match = re.search(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", page_body)
+    # Most frequent, not first. Measured on a live myaccount response (1.28 MB,
+    # 2026-09-16): 9 matches, all 9 the account's own address, 0 competing candidates —
+    # so first-match happened to be right. It is right by luck, though: one support or
+    # noreply address rendered above the account's would silently relabel the user.
+    # Counting costs nothing and removes the coin flip. Ties keep document order, so
+    # the single-candidate case is unchanged.
+    found = re.findall(_EMAIL_RE, page_body)
+    email = Counter(found).most_common(1)[0][0] if found else None
     return FlowSessionStatus(
         outcome=FlowSessionOutcome.AUTHENTICATED,
         # Absent when the page shape changes — the session is still proven by the URL,
         # so a missing label must not cost the user their login.
-        user_email=match.group(0) if match else None,
+        user_email=email,
         source=source,
     )
 

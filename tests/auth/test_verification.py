@@ -726,6 +726,28 @@ class TestMigratedHostFallback:
         assert result.user_email == "dev@axelate.io"
 
     @pytest.mark.asyncio
+    async def test_the_accounts_own_address_wins_over_a_stray_one(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Most frequent, not first — the label must not be decided by page order.
+
+        Measured on a live myaccount response: 9 matches, all 9 the account's own
+        address, 0 competing candidates. First-match was therefore right by luck. A
+        single support or noreply address rendered ABOVE the account's would have
+        relabelled the user, and the user would have no way to tell.
+        """
+        from gflow_cli.auth.verification import _verify_migrated_host_fallback
+
+        body = (
+            "<a>noreply@google.com</a>"  # rendered first, appears once
+            "<b>dev@axelate.io</b><i>dev@axelate.io</i><u>dev@axelate.io</u>"
+        )
+        self._patch(monkeypatch, _migrated_mock(body=body))
+        result = await _verify_migrated_host_fallback(tmp_path, "t")
+        assert result is not None
+        assert result.user_email == "dev@axelate.io", "a stray address won the label"
+
+    @pytest.mark.asyncio
     async def test_a_redirect_off_myaccount_is_refused(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

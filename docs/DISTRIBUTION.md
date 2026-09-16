@@ -24,7 +24,7 @@ channel no longer accepts anything).
 | Channel | Audience | Submit via | Status | Last verified |
 |---|---|---|---|---|
 | [PyPI](https://pypi.org/project/gflow-cli/) | Python users, every downstream scraper | `uv publish` (release) | listed | 2026-09-14 |
-| [Official MCP Registry](https://registry.modelcontextprotocol.io) | Agent devs; feeds other registries | `mcp-publisher` workflow, **manual dispatch for now** (#829, #841) | **listed** · `0.76.0` active · the `release: published` trigger does NOT fire ([#841](https://github.com/ffroliva/gflow-cli/issues/841)) | 2026-09-16 |
+| [Official MCP Registry](https://registry.modelcontextprotocol.io) | Agent devs; feeds other registries | `mcp-publisher` workflow on `release: published` (#829; trigger repaired in #841) | **listed** · `0.76.0` active · automation repaired but **not yet exercised** — v0.77.0 is its first real run | 2026-09-16 |
 | [Glama](https://glama.ai/mcp/servers/ffroliva/gflow-cli) | Broad MCP audience (87k servers) | Web form | **listed** · claimed · rated **A** · release **0.75.0** published · Auto-Release on | 2026-09-15 |
 | [MCP Market](https://mcpmarket.com/server/gflow-cli) | Consumer discovery | — (crawled us) | **listed** | 2026-09-14 |
 | [skills.sh](https://skills.sh/ffroliva/gflow-cli) | Cross-agent skill users | — (telemetry) | **listed** | 2026-09-14 |
@@ -55,17 +55,23 @@ channel no longer accepts anything).
 Ranked by reach per hour of work. The eight submissions are out; what is left is gated on one
 thing, and it is not a distribution task.
 
-> ⚠️ **The automation does not fire yet — v0.76.0 was published by hand.** `mcp-registry.yml`
-> triggers on `release: published`, but `release.yml` creates the Release with the default
-> `GITHUB_TOKEN`, and GitHub does not start workflow runs from `GITHUB_TOKEN`-created events.
-> Measured on v0.76.0: a real Release was published and the workflow had **zero runs, ever**
-> ([#841](https://github.com/ffroliva/gflow-cli/issues/841)).
+> ⚠️ **Repaired in #841, and v0.77.0 is the first release that will actually test it.**
+> `mcp-registry.yml` triggers on `release: published`, and for every release through v0.76.0
+> that never fired: `release.yml` created the Release with the default `GITHUB_TOKEN`, and
+> GitHub starts no workflow runs from `GITHUB_TOKEN`-created events. Measured on v0.76.0 — a
+> real Release published, and the workflow had **zero runs, ever**
+> ([#841](https://github.com/ffroliva/gflow-cli/issues/841)). v0.76.0 was published by hand.
 >
-> Until that is fixed the sequence is **tag → release → back-merge → `gh workflow run
-> mcp-registry.yml --ref develop`**, and the order matters: `workflow_dispatch` publishes
-> whatever `server.json` says **on the dispatched ref**, so dispatching before the back-merge
-> republishes the *previous* version — silently, with a green run. That happened on v0.76.0
-> and was corrected by re-dispatching afterwards.
+> The Release is now created with `RELEASE_PAT` (a fine-grained, repo-scoped, Contents:
+> read+write token), so the event is user-created and the trigger fires. **That token expires**
+> — fine-grained PATs cap at 366 days — and its expiry reproduces #841 exactly: Release created,
+> no registry run, no error. A stale listing means *check the token's expiry first*.
+>
+> **The manual path remains, and its ordering hazard is unchanged.** `gh workflow run
+> mcp-registry.yml --ref <ref> -f version=X.Y.Z` publishes whatever `server.json` says **on that
+> ref**, so dispatching `develop` before the release back-merge lands republishes the *previous*
+> version. That happened on v0.76.0. The `version` input is now required and asserted against
+> `server.json`, so the mismatch fails the run instead of publishing green.
 
 1. **Publish to the Official MCP Registry** — the one that feeds the others (PulseMCP ingests it;
    GitHub's gallery is built on it). **v0.75.0 is the release that unblocks it**, and this document
@@ -73,11 +79,13 @@ thing, and it is not a distribution task.
    links and the ten classifiers take effect on that upload, and `mcp-publisher` can only verify
    ownership once the `mcp-name:` token is in the *published* README.
 
-   **This is now automated.** `.github/workflows/mcp-registry.yml` runs on `release: published`,
-   which fires after `release.yml` has uploaded the wheel, and authenticates with GitHub Actions
-   OIDC — no PAT, no device-code flow, no human step. It becomes live once it reaches the default
-   branch at the next release; `v0.75.0` itself therefore still needed either one manual publish or
-   the arrival of `v0.76.0`.
+   **This is automated as of #841** — it was not before, and v0.76.0 went out by hand.
+   `.github/workflows/mcp-registry.yml` runs on `release: published`, which fires after
+   `release.yml` has uploaded the wheel, and authenticates to the registry with GitHub Actions
+   OIDC — no token is ever handed to the registry. Creating the *GitHub Release* does now need a
+   user-owned token (`RELEASE_PAT`), because a `GITHUB_TOKEN`-created release starts no workflow
+   runs at all. Note `release:` events run the workflow from the **default branch**, so the file
+   has to be on `develop` before any release can exercise it.
 2. **Check Glama after the next release.** The Dockerfile is built and 0.75.0 is released, which
    met punkpeye's Glama gate. Auto-Release is meant to publish each GitHub release by itself, but
    it has never fired for us yet, and an unpinned build has already used a commit hours out of
@@ -143,9 +151,11 @@ so `uvx gflow-cli mcp run` works — which is also what a user types first, the 
 just installed.
 
 Publishing runs in CI: `.github/workflows/mcp-registry.yml`, on `release: published` (plus
-`workflow_dispatch` for a re-run). It authenticates with **GitHub Actions OIDC**, so no personal
-access token is ever created or handed to the registry, and the `mcp-publisher` download is pinned
-by version *and* sha256 because that job holds `id-token: write`.
+`workflow_dispatch -f version=X.Y.Z` for a re-run). It authenticates with **GitHub Actions OIDC**,
+so **no token is ever handed to the registry**, and the `mcp-publisher` download is pinned by
+version *and* sha256 because that job holds `id-token: write`. One PAT does exist in the release
+path — `RELEASE_PAT`, used by `release.yml` solely to create the GitHub Release so that this
+workflow is triggered at all (#841). It never reaches the registry.
 
 The equivalent by hand, if you ever need it locally:
 

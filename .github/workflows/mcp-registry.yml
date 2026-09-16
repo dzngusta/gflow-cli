@@ -3,11 +3,21 @@ name: MCP Registry
 # Publishes server.json to the Official MCP Registry — the listing that feeds the
 # downstream directories (PulseMCP ingests it; GitHub's MCP gallery is built on it).
 #
-# Ordering matters and is why this hangs off `release: published` rather than the
-# tag push. `mcp-publisher` proves namespace ownership by reading the `mcp-name:`
-# token out of the PUBLISHED PyPI README, and PyPI metadata is frozen per release —
-# so the wheel has to be up first. `release.yml` publishes to PyPI and only then
-# creates the GitHub Release, so by the time this fires the token is live.
+# Ordering matters. `mcp-publisher` proves namespace ownership by reading the
+# `mcp-name:` token out of the PUBLISHED PyPI README, and PyPI metadata is frozen
+# per release — so the wheel has to be up first. `release.yml` calls this workflow
+# with `needs: build-and-publish`, which is what guarantees that.
+#
+# This hung off `release: published` and never fired once, because `release.yml`
+# created the Release with the default GITHUB_TOKEN and GitHub starts no workflow
+# runs from GITHUB_TOKEN-created events. The trigger was structurally dead rather
+# than mistimed, so it would not have started working at the next release either
+# (#841). The fix is in release.yml: the Release is now created with RELEASE_PAT,
+# a user-owned token, so the event counts as user-created and this runs.
+#
+# That token expires (fine-grained PATs cap at 366 days) and its expiry looks
+# exactly like #841 did — Release created, zero runs here, no error anywhere. A
+# stale registry listing means: check RELEASE_PAT's expiry before anything else.
 #
 # Auth is GitHub Actions OIDC. There is no PAT and no device-code flow: the runner
 # exchanges its own short-lived identity token for registry credentials, which is
@@ -17,9 +27,16 @@ on:
   release:
     types: [published]
   # Manual re-run, e.g. a release whose registry publish failed after PyPI
-  # succeeded. `validate` runs first either way, so a bad server.json stops
-  # before anything is sent.
+  # succeeded. `version` is REQUIRED here because a dispatch publishes whatever
+  # the REF carries: dispatching `develop` before the release back-merge lands
+  # republishes the PREVIOUS version, green, with nothing downstream noticing.
+  # That happened on v0.76.0 (#841) — the guard below now makes it loud.
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, e.g. 0.76.0. Must match server.json on the dispatched ref."
+        required: true
+        type: string
 
 # Write scopes live at JOB level (Scorecard Token-Permissions: a workflow-level
 # write grant reaches every job, current and future).
@@ -42,6 +59,26 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+
+      - name: server.json must carry the version being published
+        # The repo-side agreement (pyproject == __init__ == plugin.json == uv.lock
+        # == server.json) is already a merge gate in check_repo_hygiene.py, so the
+        # only way these disagree is publishing from the WRONG REF. That is exactly
+        # the failure this catches.
+        env:
+          # A release event carries the tag; a dispatch carries the typed input.
+          EXPECTED_VERSION: ${{ inputs.version || github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          expected="${EXPECTED_VERSION#v}"
+          declared=$(jq -r '.version' server.json)
+          packaged=$(jq -r '.packages[0].version' server.json)
+          if [ "$declared" != "$expected" ] || [ "$packaged" != "$expected" ]; then
+            echo "::error::Publishing ${expected}, but server.json on this ref declares ${declared} (package ${packaged})."
+            echo "::error::A dispatch publishes whatever the REF carries. Dispatch the release tag, or wait for the back-merge to land on develop (#841)."
+            exit 1
+          fi
+          echo "server.json declares ${declared} — matches the version being published."
 
       - name: Install mcp-publisher
         env:

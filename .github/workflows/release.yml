@@ -75,6 +75,18 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
+          # NOT the default GITHUB_TOKEN. GitHub starts no workflow runs from events
+          # created with it, so a Release made under GITHUB_TOKEN never fired
+          # `mcp-registry.yml`'s `release: published` trigger — zero runs, ever, across
+          # every release that shipped with #829 (#841). A user-owned PAT makes the
+          # event count as user-created, which is what starts the registry publish.
+          #
+          # RELEASE_PAT is a fine-grained PAT scoped to this repo with Contents:
+          # read+write and NOTHING else. Fine-grained tokens expire (366 days max), and
+          # the failure when it does is silent and identical to #841: the Release is
+          # still created, the registry run simply never starts. If the registry listing
+          # ever goes stale again, check this token's expiry FIRST.
+          token: ${{ secrets.RELEASE_PAT }}
           generate_release_notes: true
           files: dist/*
           # Pre-release detection covers both conventions:

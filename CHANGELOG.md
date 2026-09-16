@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The MCP Registry publish never ran — not once, on any release that shipped with it.**
+  `mcp-registry.yml` triggers on `release: published`, but `release.yml` created the Release
+  with the default `GITHUB_TOKEN`, and GitHub starts no workflow runs from
+  `GITHUB_TOKEN`-created events. Measured on v0.76.0: a real Release published
+  (`draft=false`, `prerelease=false`), the workflow file on the default branch, and
+  `gh run list --workflow=mcp-registry.yml` returning **zero runs, ever**. The trigger was
+  structurally dead rather than mistimed, so it would not have begun working at the next
+  release. The Release is now created with `RELEASE_PAT`, a fine-grained repo-scoped token
+  with Contents: read+write and nothing else, which makes the event user-created. The
+  registry itself is still authenticated with GitHub Actions OIDC — **no token is handed to
+  the registry**; the PAT exists only to create the Release. That token expires (366 days
+  max) and its expiry reproduces this bug exactly and silently, so the failure mode is
+  written down next to the token in `release.yml` and in `docs/DISTRIBUTION.md`. ([#841](https://github.com/ffroliva/gflow-cli/issues/841))
+- **A manual registry dispatch could publish a superseded version, green, with nothing
+  noticing.** `workflow_dispatch` publishes whatever `server.json` says *on the dispatched
+  ref*. Dispatching `develop` after the v0.76.0 tag but before the back-merge landed
+  republished `0.75.0` to the registry and the run succeeded. The dispatch now takes a
+  required `version` input and asserts it against both version fields in `server.json`,
+  failing the run on a mismatch instead of publishing. ([#841](https://github.com/ffroliva/gflow-cli/issues/841))
+
 ## [0.76.0] — 2026-09-16
 
 ### Fixed

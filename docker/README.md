@@ -148,6 +148,14 @@ tools/list       : OK, 15 tools
 
 Re-run that after any base-image bump. If it stops holding, the interpreter is the first suspect.
 
+> **Measured on the 0.75.0 image, not re-measured for 0.76.0.** The numbers above and in the
+> table below are a record of a run, so they are left as they were rather than edited to match
+> the current version — a quoted measurement that tracks `pyproject.toml` is not a measurement.
+> `ARG GFLOW_VERSION` *is* gated against the repo version by
+> `tests/test_dockerfile_version_pin.py`, so the image installs 0.76.0; what is unverified is
+> that the runtime contract still holds on it. Re-running the block above on a WSL-integrated
+> Docker host is what would settle it.
+
 ## Benchmark — measured 2026-09-15
 
 Reproduce with `docker/Dockerfile.test` (copy `dockerignore.example` to `.dockerignore` at the

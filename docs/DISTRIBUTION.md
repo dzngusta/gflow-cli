@@ -24,7 +24,7 @@ channel no longer accepts anything).
 | Channel | Audience | Submit via | Status | Last verified |
 |---|---|---|---|---|
 | [PyPI](https://pypi.org/project/gflow-cli/) | Python users, every downstream scraper | `uv publish` (release) | listed | 2026-09-14 |
-| [Official MCP Registry](https://registry.modelcontextprotocol.io) | Agent devs; feeds other registries | `mcp-publisher` CLI | **ready — submit once v0.75.0 is on PyPI** | 2026-09-15 |
+| [Official MCP Registry](https://registry.modelcontextprotocol.io) | Agent devs; feeds other registries | `mcp-publisher`, automated on release (#829) | **automated — first run is v0.76.0's own release job** | 2026-09-16 |
 | [Glama](https://glama.ai/mcp/servers/ffroliva/gflow-cli) | Broad MCP audience (87k servers) | Web form | **listed** · claimed · rated **A** · release **0.75.0** published · Auto-Release on | 2026-09-15 |
 | [MCP Market](https://mcpmarket.com/server/gflow-cli) | Consumer discovery | — (crawled us) | **listed** | 2026-09-14 |
 | [skills.sh](https://skills.sh/ffroliva/gflow-cli) | Cross-agent skill users | — (telemetry) | **listed** | 2026-09-14 |
@@ -64,7 +64,7 @@ thing, and it is not a distribution task.
    **This is now automated.** `.github/workflows/mcp-registry.yml` runs on `release: published`,
    which fires after `release.yml` has uploaded the wheel, and authenticates with GitHub Actions
    OIDC — no PAT, no device-code flow, no human step. It becomes live once it reaches the default
-   branch at the next release; `v0.75.0` itself therefore still needs either one manual publish or
+   branch at the next release; `v0.75.0` itself therefore still needed either one manual publish or
    the arrival of `v0.76.0`.
 2. **Check Glama after the next release.** The Dockerfile is built and 0.75.0 is released, which
    met punkpeye's Glama gate. Auto-Release is meant to publish each GitHub release by itself, but

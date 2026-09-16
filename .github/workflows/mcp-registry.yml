@@ -3,33 +3,39 @@ name: MCP Registry
 # Publishes server.json to the Official MCP Registry — the listing that feeds the
 # downstream directories (PulseMCP ingests it; GitHub's MCP gallery is built on it).
 #
-# Ordering matters, and it is `release.yml`'s STEP ORDER that guarantees it — not any
-# `needs:`/`workflow_call` wiring, of which there is none. `mcp-publisher` proves
-# namespace ownership by reading the `mcp-name:` token out of the PUBLISHED PyPI
-# README, and PyPI metadata is frozen per release, so the wheel must be up first.
-# `release.yml` runs "Publish to PyPI" and only then "Create GitHub Release", and
-# this fires on that Release.
+# This is CALLED by release.yml (`uses:` + `needs: build-and-publish`), never triggered
+# by an event. Two reasons, both learned the hard way:
 #
-# It never fired before #841: `release.yml` created the Release with the default
-# GITHUB_TOKEN, and GitHub starts no workflow runs from GITHUB_TOKEN-created events.
-# Structurally dead rather than mistimed — it would not have started working at the
-# next release. The Release is now created with RELEASE_PAT, so the event is
-# user-created and this runs. A `release` event checks out the TAG
-# (GITHUB_REF = refs/tags/<tag_name>), so server.json here is the released one.
+#  1. `on: release: published` does not work here. release.yml creates the Release with
+#     the default GITHUB_TOKEN, and GitHub starts no workflow runs from
+#     GITHUB_TOKEN-created events — so it never fired once, on any release, with nothing
+#     going red (#841). Creating the Release with a user PAT would fix that, at the price
+#     of a credential that expires every 366 days on a path that runs a handful of times
+#     a year. A call has no such fuse.
+#  2. Ordering. `mcp-publisher` proves namespace ownership by reading the `mcp-name:`
+#     token out of the PUBLISHED PyPI README, and PyPI metadata is frozen per release, so
+#     the wheel must be up first. `needs: build-and-publish` enforces that structurally,
+#     rather than by two files happening to agree about step order.
 #
-# Registry auth is GitHub Actions OIDC: the runner exchanges its own short-lived
-# identity token for registry credentials, which is why this needs `id-token: write`
-# and nothing else. **No token is ever handed to the registry** — RELEASE_PAT lives
-# in release.yml and only creates the Release.
+# Being called also pins the publish to the release TAG, so server.json is the released
+# one — the wrong-ref hazard that republished 0.75.0 over 0.76.0 (#841) cannot arise on
+# this path at all. It still can on a hand dispatch, which is what the guard below is for.
+#
+# Registry auth is GitHub Actions OIDC: the runner exchanges its own short-lived identity
+# token for registry credentials, which is why this needs `id-token: write` and nothing
+# else. No token of any kind is stored for, or handed to, the registry.
 
 on:
-  release:
-    types: [published]
-  # Manual re-run, e.g. a release whose registry publish failed after PyPI
-  # succeeded. `version` is REQUIRED here because a dispatch publishes whatever
-  # the REF carries: dispatching `develop` before the release back-merge lands
-  # republishes the PREVIOUS version, green, with nothing downstream noticing.
-  # That happened on v0.76.0 (#841) — the guard below now makes it loud.
+  workflow_call:
+    inputs:
+      version:
+        description: "Version being published, with or without a leading `v`. Must match server.json on the checked-out ref."
+        required: true
+        type: string
+  # Manual re-run, e.g. a release whose registry publish failed after PyPI succeeded.
+  # `version` is REQUIRED because a dispatch publishes whatever the REF carries:
+  # dispatching `develop` before the release back-merge lands republishes the PREVIOUS
+  # version, green, with nothing downstream noticing. That happened on v0.76.0 (#841).
   workflow_dispatch:
     inputs:
       version:
@@ -45,11 +51,6 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    # `published` fires for pre-releases too — GitHub's own docs say so explicitly, and
-    # release.yml marks any a/b/rc/`-` tag as one. Without this filter a v1.2.3rc1 would
-    # become the registry's ACTIVE listing, which is what PulseMCP and GitHub's MCP
-    # gallery ingest. A dispatch has no release payload, so the guard is release-only.
-    if: ${{ github.event_name != 'release' || !github.event.release.prerelease }}
     permissions:
       contents: read
       id-token: write # OIDC exchange with registry.modelcontextprotocol.io
@@ -70,11 +71,9 @@ jobs:
         # these disagree is publishing from the WRONG REF — which is exactly what
         # happened on v0.76.0 (#841) and what this catches.
         #
-        # Both arms read `github.event.*`, which exists on every trigger. The bare
-        # `inputs` context is documented for workflow_dispatch/workflow_call but not for
-        # a release event, and this path cannot be rehearsed, so it is not relied on.
+        # `inputs` is documented for exactly the two triggers this workflow declares.
         env:
-          EXPECTED_VERSION: ${{ github.event.inputs.version || github.event.release.tag_name }}
+          EXPECTED_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           expected="${EXPECTED_VERSION#v}"
@@ -88,6 +87,15 @@ jobs:
             echo "::error::server.json is absent on this ref — nothing to publish."
             exit 1
           fi
+          # A pre-release must never become the registry's ACTIVE listing — that is what
+          # PulseMCP and GitHub's MCP gallery ingest. release.yml skips the call for one,
+          # so reaching here means a hand dispatch asked for it explicitly. Refuse anyway.
+          case "${expected}" in
+            *-*|*a*|*b*|*rc*)
+              echo "::error::${expected} is a pre-release. Publishing it would make it the registry's active listing."
+              exit 1
+              ;;
+          esac
           declared=$(jq -r '.version' server.json)
           packaged=$(jq -r '[.packages[]?.version] | join(", ")' server.json)
           if ! jq -e --arg v "${expected}" '.version == $v and all(.packages[]?.version; . == $v)' server.json >/dev/null; then

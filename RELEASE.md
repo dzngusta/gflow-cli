@@ -21,37 +21,31 @@ When a tag matching `v*.*.*` is pushed, GitHub Actions:
    leading `v`.
 2. Builds the wheel and source distribution with `uv build`.
 3. Publishes to PyPI through Trusted Publishing.
-4. Asserts the `RELEASE_PAT` secret is present (before the build — see below).
-5. Creates a GitHub Release with `RELEASE_PAT` and attaches the built artifacts.
-6. Marks tags containing PEP 440 alpha, beta, or release-candidate markers as
+4. Creates a GitHub Release and attaches the built artifacts.
+5. Marks tags containing PEP 440 alpha, beta, or release-candidate markers as
    GitHub prereleases.
-7. Publishes `server.json` to the Official MCP Registry — `mcp-registry.yml`, on the
-   `release: published` the previous step emits. Full releases only; prereleases are
-   skipped so an `rc` never becomes the registry's active listing.
+6. Publishes `server.json` to the Official MCP Registry — `release.yml` **calls**
+   `mcp-registry.yml` with `needs: build-and-publish`. Full releases only; the call is
+   skipped for prereleases so an `rc` never becomes the registry's active listing.
 
-### The `RELEASE_PAT` prerequisite (expires — put it in your calendar)
+### Why the registry publish is called, not triggered
 
-Step 5 does **not** use the default `GITHUB_TOKEN`, and that is load-bearing. GitHub starts
-no workflow runs from `GITHUB_TOKEN`-created events, so a Release created with it emits a
-`release: published` that nothing receives — the MCP Registry publish then never runs, and
-nothing anywhere goes red. That was [#841](https://github.com/ffroliva/gflow-cli/issues/841):
-zero runs, ever, across every release that shipped with the automation.
+Worth knowing before anyone "tidies" it into an event trigger. It used to hang off
+`on: release: published`, and it **never fired once**, on any release, with nothing going
+red ([#841](https://github.com/ffroliva/gflow-cli/issues/841)): GitHub starts no workflow
+runs from events created with the default `GITHUB_TOKEN`, which is what creates the Release
+in step 4.
 
-`RELEASE_PAT` is a fine-grained PAT, scoped to this repo, `Contents: read and write`, nothing
-else. **Fine-grained PATs cap at 366 days.** Two failure shapes, and they are not alike:
-
-| State | What happens | Loud? |
-|---|---|---|
-| Expired / revoked | `Create GitHub Release` 401s, job red, **no Release created** | Yes |
-| Deleted / renamed secret | Guarded: the run fails before the build with an explicit error | Yes, since #843 |
-| Valid | Release created, registry publish fires | — |
-
-To rotate: mint a new fine-grained PAT (Settings → Developer settings → Personal access
-tokens → Fine-grained), same scope, and replace the `RELEASE_PAT` repository secret.
+A user PAT on that step would also fix it, and was rejected: fine-grained tokens expire
+after at most 366 days, so it puts a scheduled failure on a path that runs a handful of
+times a year. **There is no secret to rotate in the current design.** `needs:` additionally
+enforces the ordering `mcp-publisher` requires — it reads the `mcp-name:` token out of the
+*published* PyPI README, so the wheel has to be up first — and the call runs against the
+release tag, so `server.json` is always the released one.
 
 ### If the release job fails after PyPI
 
-The PyPI upload is step 3 and the Release is step 5, so a failure in between leaves the wheel
+The PyPI upload is step 3 and the Release is step 4, so a failure in between leaves the wheel
 **already published**. `pypa/gh-action-pypi-publish` runs without `skip-existing`, so re-running
 the workflow fails on the duplicate filename, and re-tagging is not permitted. Recover by hand:
 
@@ -60,9 +54,10 @@ gh release create vX.Y.Z --generate-notes dist/*
 gh workflow run mcp-registry.yml --ref vX.Y.Z -f version=X.Y.Z
 ```
 
-The dispatch is needed because a Release created by `gh` under your own token does fire the
-trigger, but only re-run it against the **tag** — dispatching a branch publishes whatever
-`server.json` that branch carries, which is how v0.76.0 republished 0.75.0.
+The registry publish needs its own dispatch because it hangs off the release job via
+`needs:`, so a failed release job means it never ran. Dispatch it against the **tag** — a
+branch publishes whatever `server.json` that branch carries, which is how v0.76.0
+republished 0.75.0.
 
 ## Prerelease Versus Full Release
 

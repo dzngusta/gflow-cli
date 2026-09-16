@@ -14,11 +14,10 @@ jobs:
   build-and-publish:
     runs-on: ubuntu-latest
     permissions:
-      # The Release is created with RELEASE_PAT, not GITHUB_TOKEN, so nothing in this
-      # job needs contents:write any more — checkout is persist-credentials:false and
-      # PyPI uses OIDC. Least privilege: GITHUB_TOKEN gets no write grant here at all.
-      contents: read
+      contents: write # for creating GitHub Releases
       id-token: write # for PyPI Trusted Publishing (OIDC)
+    outputs:
+      prerelease: ${{ steps.tag_kind.outputs.prerelease }}
     environment:
       name: pypi
       url: https://pypi.org/p/gflow-cli
@@ -67,21 +66,24 @@ jobs:
             exit 1
           fi
 
-      - name: RELEASE_PAT must be present
-        # The one silent regression path back to #841. If the secret is deleted or
-        # renamed, `secrets.RELEASE_PAT` is the empty string; an action that falls back
-        # to its default token would then create the Release under GITHUB_TOKEN, the
-        # registry publish would never start, and every step would still be green.
-        # Fail here instead, where the reason is written down.
+      - name: Classify the tag
+        # Single source of truth for prerelease-ness. It gates BOTH the GitHub Release
+        # flag and whether the MCP Registry publish runs at all; as two copies of the
+        # same four-clause expression those would eventually disagree.
+        #   - semver suffixes:  v1.2.3-alpha1, v1.2.3-rc1, v1.2.3-beta1  (any '-')
+        #   - PEP 440 suffixes: v1.2.3a1, v1.2.3b1, v1.2.3rc1            (any a / b / rc)
+        # Stable tags like v1.2.3 contain none of these.
+        id: tag_kind
         env:
-          RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
+          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          if [ -z "${RELEASE_PAT}" ]; then
-            echo "::error::RELEASE_PAT is unset or empty. A Release created with the default GITHUB_TOKEN starts no workflow runs, so the MCP Registry publish would silently not run (#841)."
-            exit 1
-          fi
-          echo "RELEASE_PAT is present."
+          case "${TAG}" in
+            *-*|*a*|*b*|*rc*) prerelease=true ;;
+            *)                prerelease=false ;;
+          esac
+          echo "prerelease=${prerelease}" >> "${GITHUB_OUTPUT}"
+          echo "${TAG} -> prerelease=${prerelease}"
 
       - name: Build
         run: uv build
@@ -94,25 +96,26 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
-          # NOT the default GITHUB_TOKEN. GitHub starts no workflow runs from events
-          # created with it, so a Release made under GITHUB_TOKEN never fired
-          # `mcp-registry.yml`'s `release: published` trigger — zero runs, ever, across
-          # every release that shipped with #829 (#841). A user-owned PAT makes the
-          # event count as user-created, which is what starts the registry publish.
-          #
-          # RELEASE_PAT is a fine-grained PAT scoped to this repo with Contents:
-          # read+write and NOTHING else. Fine-grained tokens expire (366 days max).
-          #
-          # An EXPIRED token fails loud: this step 401s and the job goes red, so no
-          # Release exists. Note it fails AFTER the PyPI upload, which has no
-          # `skip-existing` — do not re-run the workflow, create the Release by hand
-          # (`gh release create`). See RELEASE.md § If the release job fails after PyPI.
-          # A MISSING token is the silent one, which is why the step above guards it.
-          token: ${{ secrets.RELEASE_PAT }}
           generate_release_notes: true
           files: dist/*
-          # Pre-release detection covers both conventions:
-          #   - semver suffixes:  v1.2.3-alpha1, v1.2.3-rc1, v1.2.3-beta1   (any '-' qualifies)
-          #   - PEP 440 suffixes: v1.2.3a1, v1.2.3b1, v1.2.3rc1             (any 'a' / 'b' / 'rc')
-          # Stable tags like v1.2.3 contain none of these substrings.
-          prerelease: ${{ contains(github.ref_name, '-') || contains(github.ref_name, 'a') || contains(github.ref_name, 'b') || contains(github.ref_name, 'rc') }}
+          prerelease: ${{ steps.tag_kind.outputs.prerelease == 'true' }}
+
+  mcp-registry:
+    # The registry listing is part of the release, not a follow-up, so it is CALLED here
+    # rather than triggered by the Release above. `on: release: published` never fired
+    # once: the Release is created with the default GITHUB_TOKEN, and GitHub starts no
+    # workflow runs from GITHUB_TOKEN-created events (#841). A user PAT would fix that
+    # and add a 366-day expiry to a path that runs a few times a year; a call adds none.
+    #
+    # `needs:` is also what guarantees the ordering mcp-publisher requires — it reads the
+    # `mcp-name:` token from the PUBLISHED PyPI README, so the wheel must be up first.
+    # And the call runs against this TAG, so server.json is the released one.
+    needs: build-and-publish
+    # A pre-release must never become the registry's ACTIVE listing.
+    if: needs.build-and-publish.outputs.prerelease != 'true'
+    permissions:
+      contents: read
+      id-token: write # OIDC exchange with registry.modelcontextprotocol.io
+    uses: ./.github/workflows/mcp-registry.yml
+    with:
+      version: ${{ github.ref_name }}

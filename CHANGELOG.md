@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`gflow update` could report a version for an install that no longer starts.** A package
+  manager replaces files in place, so an interrupted upgrade leaves a venv whose *metadata*
+  reads perfectly and whose *imports* are dead. `gflow update` only ever re-read the version,
+  so it called that state *"still 0.69.0"* and sent the user to a plain `uv tool upgrade` —
+  which cannot repair it, because it reads the same intact metadata, finds it current and
+  changes nothing. Measured on Windows: an aborted native-dependency swap left every command
+  dying on `AttributeError: module 'greenlet' has no attribute 'greenlet'`, and only
+  `uv tool install "gflow-cli==<version>" --force --reinstall` completed.
+
+  After the manager runs, `gflow update` now imports gflow-cli in a fresh isolated
+  interpreter *before* it looks at any version, and a failed import is reported as an
+  unusable install (exit 11) quoting that interpreter's own last line, with the forced
+  reinstall as the remediation. The probe is isolated (`-I`) so a `gflow_cli` directory in
+  the caller's working directory cannot answer on the venv's behalf, and a probe that could
+  not run at all is never reported as breakage.
+  ([#848](https://github.com/ffroliva/gflow-cli/issues/848))
+
 ## [0.77.0] — 2026-09-16
 
 ### Fixed

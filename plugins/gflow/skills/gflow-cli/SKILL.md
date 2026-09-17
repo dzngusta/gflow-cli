@@ -107,7 +107,8 @@ gflow instructions apply FILE --project ID                # declarative full-syn
 gflow instructions toggle-mode (--on | --off) --project ID # toggle master agent switch
 
 # Keeping gflow-cli current (every command shows a banner when a newer release exists)
-gflow update [--check] [--json]                            # upgrades via uv tool / pipx / pip; source installs refused (exit 11)
+gflow update [--check] [--json]
+gflow docs [TOPIC] [--search TERM] [--json]                            # upgrades via uv tool / pipx / pip; source installs refused (exit 11)
 ```
 
 Every subcommand accepts `--profile <name>` (per-subcommand, not global) to drive multiple Google accounts side-by-side.

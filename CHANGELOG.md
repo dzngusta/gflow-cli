@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.78.0] — 2026-09-17
+
 ### Added
 
 - **`--aspect 3:4` images now run on `flow.google.com`.** Flow's image settings there
@@ -5467,7 +5469,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.77.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.78.0...HEAD
+[0.78.0]: https://github.com/ffroliva/gflow-cli/compare/v0.77.1...v0.78.0
 [0.77.1]: https://github.com/ffroliva/gflow-cli/compare/v0.77.0...v0.77.1
 [0.77.0]: https://github.com/ffroliva/gflow-cli/compare/v0.76.0...v0.77.0
 [0.76.0]: https://github.com/ffroliva/gflow-cli/compare/v0.75.0...v0.76.0

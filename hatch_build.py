@@ -35,8 +35,25 @@ class DocsBuildHook(BuildHookInterface):  # type: ignore[type-arg]
     PLUGIN_NAME = "custom"
 
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
+        # An editable install resolves `gflow_cli` to `src/`, so `_docs` there is never
+        # read -- `docs_catalog` finds the checkout's own `docs/` instead. Copying 126
+        # pages into site-packages anyway left a directory named after the package with
+        # no `__init__.py` in it, recopied on every `uv sync` and stale by the next edit.
+        if version == "editable":
+            return
         # Non-recursive on purpose: `docs/assets/` is 2 MB of images and
         # `docs/superpowers/` is plans and spikes. Neither is a page the command lists,
         # and shipping them was measured at 4.3 MB for no reader.
-        for page in sorted(Path(self.root, "docs").glob("*.md")):
+        pages = sorted(Path(self.root, "docs").glob("*.md"))
+        if not pages:
+            # `Path.glob` on a missing directory returns empty, so without this the hook
+            # emits a structurally valid wheel in which `gflow docs` is empty for every
+            # user -- and `release.yml` is `uv build` then publish, with nothing in
+            # between that would notice. Measured: a sdist with `docs/` removed built a
+            # 767 KB wheel carrying zero pages and exit 0. Fail the build instead.
+            raise ValueError(
+                f"no documentation pages found under {Path(self.root, 'docs')} -- "
+                "`gflow docs` would ship empty; refusing to build (#861)"
+            )
+        for page in pages:
             build_data["force_include"][str(page)] = f"{DOCS_PACKAGE_DIR}/{page.name}"

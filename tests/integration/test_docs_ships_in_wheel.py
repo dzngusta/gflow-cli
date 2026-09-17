@@ -7,9 +7,12 @@ which would also make all of them pass against a build that ships no documentati
 This is the only test that can tell those two worlds apart, so it builds a wheel, installs
 it somewhere with no repository in sight, and runs the command there.
 
-It costs a build and a venv, so it is marked `integration` rather than running on every
-save. `-m integration` picks it up; `uv build` and `uv venv` are the only requirements
-(no Docker, no network beyond the resolver's cache, no account).
+**It runs on every plain `pytest`, including PR CI.** `addopts` excludes only
+`e2e, live, smoke, containers`, so the `integration` marker does not opt out of anything —
+it is a label, not a gate. That is the right outcome (the wheel claim is enforced where it
+matters) but it is worth stating, because it costs a build and a venv on every local run.
+`uv build` and `uv venv` are the only requirements: no Docker, no network beyond the
+resolver's cache, no account.
 """
 
 from __future__ import annotations
@@ -29,9 +32,15 @@ _REPO = Path(__file__).resolve().parents[2]
 
 
 def _uv() -> str:
+    """`uv` or a skip — but a LOUD one.
+
+    A silent skip would let the PR's headline claim ("proven from an installed wheel")
+    degrade to nothing on a runner without uv, reported as a pass. uv is this project's
+    build tool and is present in CI, so reaching the skip is itself the signal.
+    """
     found = shutil.which("uv")
     if found is None:  # pragma: no cover - uv is this project's build tool
-        pytest.skip("uv is required to build the wheel")
+        pytest.skip("uv not on PATH — the installed-wheel guarantee was NOT verified")
     return found
 
 

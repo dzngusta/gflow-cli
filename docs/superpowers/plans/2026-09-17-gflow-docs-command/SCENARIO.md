@@ -66,6 +66,18 @@ is reference material rather than invent one. It is false: **`INDEX.md` links 93
 than kept as a knob that does nothing, and `_score`'s docstring records why, so it is not
 reinvented.
 
+**Corrected after the council review.** The `LIVE_VERIFICATION_*` rows in row 2 above were
+not simply "release records outranking reference pages" — several were `#` **shell comments
+inside fenced code blocks**, scored as Markdown headings. `# 5. One cheapest stable T2V
+generation, no explicit --duration` ranked 2nd of 136. The fence tracking that fixes it is
+four lines, and with it a bare `--search duration` now opens with curated `INDEX.md` rows
+rather than release archaeology. The separate curated-shortcut parser was deleted in the
+same pass: its hits were measured as a strict *subset* of what the body scan already
+returned (0 of 7 for `r2v duration`), so 28 lines of regex were only re-ordering rows search
+already had — and stripping Markdown from those rows mangled the file name they pointed at
+(`REFERENCE_STRATEGIES.md` → `REFERENCESTRATEGIES.md`, printed as the answer). It is now a
+score bonus.
+
 What works is the query carrying a second word: `r2v duration` returns **5** hits with
 `docs/MCP.md:87` first. So the acceptance test is #8 as amended, and #8b holds the command
 to answering a vague question honestly — the count and a way to narrow — rather than

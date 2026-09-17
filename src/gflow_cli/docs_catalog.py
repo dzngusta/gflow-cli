@@ -17,6 +17,7 @@ read time (:func:`topics` iterates it). There is nothing to keep in sync.
 
 from __future__ import annotations
 
+import difflib
 import re
 from dataclasses import dataclass
 from importlib import resources
@@ -32,22 +33,12 @@ _PACKAGE_DOCS = "_docs"
 #: and the prefix used for the `file:line` positions search reports.
 REPO_DOCS_DIR = "docs"
 
-#: A curated row of `INDEX.md` § Topic shortcuts:
-#: `**"How do I X?"** → [LABEL](TARGET.md#anchor) trailing prose`
-#: These are the highest-signal lines in the whole tree — each one was written to *be* an
-#: answer — so they are searched first and ranked above raw body text.
-_SHORTCUT = re.compile(r'^\*\*"(?P<question>.+?)"\*\*\s*(?:→|->)\s*(?P<answer>.+)$')
-
-#: The first Markdown link inside a shortcut's answer half.
-_FIRST_LINK = re.compile(r"\[(?P<label>[^\]]+)\]\((?P<target>[^)]+)\)")
-
 #: How much of a matching line to show. `MCP.md` has single lines over 4 000 characters;
 #: printing one whole is the "go read the file" answer with extra steps.
 _SNIPPET_WIDTH = 160
 
-#: Body hits returned before the caller is told there are more. Enough to choose from,
-#: few enough to read.
-_MAX_BODY_HITS = 20
+#: Body hits shown before the caller is told how many more there are.
+MAX_HITS = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,24 +67,22 @@ class Topic:
 class Match:
     """One search hit."""
 
-    topic: str
-    """The slug of the page it was found in."""
-
     file_name: str
-    """That page's real file name — `MCP.md`, not `mcp.md`. The slug is for typing at the
+    """The page's real file name — `MCP.md`, not `mcp.md`. The slug is for typing at the
     command line; a position a reader is meant to open has to be the path that exists."""
 
     line_no: int
     """1-indexed line within that page."""
 
     text: str
-    """The matching line, windowed around the term."""
+    """The matching line, windowed around the most selective term."""
 
-    curated: bool
-    """True for an `INDEX.md` § Topic shortcuts row — an answer, not merely a location."""
+    score: int
+    """Relevance — see :func:`_score`. Only meaningful for ordering."""
 
-    score: int = 0
-    """Relevance. See :func:`_score`; only meaningful for ordering body hits."""
+    @property
+    def topic(self) -> str:
+        return _slug(self.file_name)
 
     @property
     def position(self) -> str:
@@ -113,8 +102,8 @@ def _docs_dir() -> Any:
        which is the reverse of the usual bug and twice as confusing.
 
     Resolved through ``importlib.resources`` rather than ``__file__`` so a zipimport or
-    frozen environment still reads (scenario #5). The repository fallback is derived from
-    the package's own location and never from user input.
+    frozen environment still reads. The repository fallback is derived from the package's
+    own location and never from user input.
     """
     try:
         shipped = resources.files("gflow_cli").joinpath(_PACKAGE_DOCS)
@@ -133,9 +122,12 @@ def _slug(file_name: str) -> str:
     return file_name[:-3].lower().replace("_", "-") if file_name.endswith(".md") else file_name
 
 
-#: Markdown that carries no meaning once the line is a one-line summary in a table.
+#: Markdown that carries no meaning once a line is a one-line summary in a table.
+#: **Single `*` and `_` are deliberately NOT stripped.** They were, and it turned
+#: `REFERENCE_STRATEGIES.md` into `REFERENCESTRATEGIES.md` — a file name that does not
+#: exist, printed as the answer. 106 of the 126 pages carry an underscore.
 _LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
-_EMPHASIS = re.compile(r"(\*\*|__|\*|_|`)")
+_EMPHASIS = re.compile(r"(\*\*|__|`)")
 _LIST_ITEM = re.compile(r"^(\d+[.)]|[-*+])\s")
 
 #: How much of the first prose line the topic table shows.
@@ -143,7 +135,7 @@ _SUMMARY_WIDTH = 90
 
 
 def _plain(line: str) -> str:
-    """*line* with the Markdown taken out: links become their label, emphasis goes.
+    """*line* with the Markdown taken out: links become their label, bold/code markers go.
 
     A summary column showing `Read [DISCLAIMER.md](../DISCLAIMER.md) first` is worse than
     no summary — it costs the reader the same parsing the raw file would.
@@ -175,6 +167,23 @@ def _title_and_summary(text: str) -> tuple[str, str]:
     return title, summary
 
 
+def _read(entry: Any) -> str:
+    """A page's text.
+
+    ``read_bytes`` then decode, never ``read_text(errors=…)``: ``Traversable.read_text``
+    takes only ``encoding``, so passing ``errors`` raises ``TypeError`` on the one path
+    that matters — a page read out of a zipimport. Every test here exercises the checkout
+    fallback, where ``Path`` happens to accept it, so the bug could not surface locally.
+
+    Replacement rather than strict: a page that cannot be decoded must still be listed and
+    searched, because a catalog that raises is worse than one that is lossy.
+    """
+    try:
+        return entry.read_bytes().decode("utf-8", errors="replace")
+    except (OSError, ValueError, AttributeError):  # pragma: no cover - defensive
+        return ""
+
+
 def topics() -> list[Topic]:
     """Every shipped page, by slug. Empty when no docs directory is available."""
     directory = _docs_dir()
@@ -190,21 +199,19 @@ def topics() -> list[Topic]:
     return sorted(found, key=lambda t: t.slug)
 
 
-def _read(entry: Any) -> str:
-    """A page's text. UTF-8 with replacement: a page that cannot be decoded must still be
-    listed and searched, because a catalog that raises is worse than one that is lossy."""
-    try:
-        return str(entry.read_text(encoding="utf-8", errors="replace"))
-    except (OSError, ValueError):  # pragma: no cover - defensive
-        return ""
-
-
 def read(topic: Topic) -> str:
     """The full text of a page."""
     directory = _docs_dir()
     if directory is None:  # pragma: no cover - resolve() cannot yield a Topic without one
         return ""
     return _read(directory.joinpath(topic.file_name))
+
+
+#: Remediation for every refusal this module raises. Without it they inherit
+#: `ConfigurationError._default_remediation`, which tells the reader to run
+#: `gflow config list-transports` — advice about a transport registry, printed at someone
+#: who asked for a documentation page.
+_REMEDIATION = "Run `gflow docs` for the list of topics, or `gflow docs --search <term>`."
 
 
 def resolve(name: str) -> Topic:
@@ -225,6 +232,7 @@ def resolve(name: str) -> Topic:
                 "no documentation is available in this installation — the pages ship "
                 "inside the wheel, so a source tree without them cannot serve them"
             ),
+            remediation_hint="Reinstall gflow-cli, or run from a checkout with a docs/ tree.",
         )
     key = name.strip().lower()
     if key.endswith(".md"):
@@ -244,135 +252,118 @@ def resolve(name: str) -> Topic:
                     f"{', '.join(t.slug for t in starting[:8])}"
                     f"{' …' if len(starting) > 8 else ''} — name one of them"
                 ),
+                remediation_hint=_REMEDIATION,
             )
-    raise ConfigurationError(detail=_unknown_detail(name, key, available))
+    raise ConfigurationError(
+        detail=_unknown_detail(name, key, available), remediation_hint=_REMEDIATION
+    )
 
 
 def _unknown_detail(name: str, key: str, available: list[Topic]) -> str:
-    near = [t.slug for t in available if key and key in t.slug][:6]
-    hint = (
-        f" — did you mean {', '.join(near)}?"
-        if near
-        else " — run `gflow docs` for the list, or `gflow docs --search <term>`"
-    )
+    """The refusal, with the nearest topics attached.
+
+    `difflib.get_close_matches` rather than only a substring scan: a substring scan offers
+    nothing for a typo, and a typo is the common case — `usge` shares no substring with
+    `usage` but is one transposition away.
+    """
+    slugs = [t.slug for t in available]
+    near = difflib.get_close_matches(key, slugs, n=3, cutoff=0.6) if key else []
+    if not near and key:
+        near = [s for s in slugs if key in s][:3]
+    hint = f" — did you mean {', '.join(near)}?" if near else ""
     return f"no documentation topic named {name!r}{hint}"
 
 
-def _snippet(line: str, term: str) -> str:
-    """*line*, windowed around the first occurrence of *term*.
+def _snippet(line: str, terms: list[str]) -> str:
+    """*line*, windowed around its most selective term.
 
     `MCP.md` documents the migrated-host duration rule inside a single 4 000-character
     bullet. Returning that line whole is the failure #861 describes, restated as output.
+
+    The window centres on whichever term occurs **least** on this line, not on the first
+    one typed: for `r2v duration` against that bullet, `r2v` recurs throughout while
+    `duration` marks the one clause the reader wants.
     """
     collapsed = " ".join(line.split())
     if len(collapsed) <= _SNIPPET_WIDTH:
         return collapsed
-    at = collapsed.lower().find(term.lower())
-    if at < 0:  # pragma: no cover - callers only pass lines that matched
+    lowered = collapsed.lower()
+    present = [t for t in terms if t in lowered]
+    if not present:  # pragma: no cover - callers only pass lines that matched
         return collapsed[:_SNIPPET_WIDTH] + " …"
+    at = lowered.find(min(present, key=lowered.count))
     start = max(0, at - _SNIPPET_WIDTH // 3)
     end = min(len(collapsed), start + _SNIPPET_WIDTH)
     return ("… " if start else "") + collapsed[start:end] + (" …" if end < len(collapsed) else "")
 
 
-def shortcuts() -> list[tuple[int, str, str]]:
-    """`INDEX.md` § Topic shortcuts as ``(line_no, question, target)``.
-
-    Additive, never load-bearing: if `INDEX.md` is missing or its format changes, this
-    returns nothing and :func:`search` falls back to body text alone. A curated index is
-    worth ranking first and worth nothing to depend on.
-    """
-    directory = _docs_dir()
-    if directory is None:
-        return []
-    index = directory.joinpath("INDEX.md")
-    if not index.is_file():
-        return []
-    rows: list[tuple[int, str, str]] = []
-    for line_no, raw in enumerate(_read(index).splitlines(), start=1):
-        row = _SHORTCUT.match(raw.strip())
-        if row is None:
-            continue
-        link = _FIRST_LINK.search(row.group("answer"))
-        rows.append((line_no, row.group("question"), link.group("target") if link else ""))
-    return rows
-
-
+#: An `INDEX.md` § Topic shortcuts row — `**"How do I X?"** → [LABEL](TARGET.md)`. These
+#: are the highest-signal lines in the tree: each was written to *be* an answer. They are
+#: a RANKING bonus, not a separate pass. A separate parser existed and was measured out:
+#: its hits were a strict subset of what the body scan already found (0 of 7 for the
+#: flagship `r2v duration`), so 28 lines of regex only re-ordered rows search already had
+#: — and stripping Markdown from the row mangled the file name it was pointing at.
+_CURATED_BONUS = 20
 _HEADING_BONUS = 10
+_FENCE = "```"
 
 
-def _score(line: str, terms: list[str]) -> int:
+def _score(line: str, terms: list[str], *, curated: bool, in_fence: bool) -> int:
     """How much a matching line is *about* the terms, rather than merely containing them.
 
-    Two signals: a heading is a section's own claim about itself, so it outranks body
-    prose; and a line that names a term repeatedly is discussing it rather than mentioning
-    it in passing.
+    A curated `INDEX.md` answer outranks a heading, which outranks prose; and a line that
+    names a term repeatedly is discussing it rather than mentioning it in passing.
 
-    **What ranking cannot do, measured.** The query in #861 is the bare word `duration`,
-    and it has 133 hits. Alphabetical order put a UI-recon document on top. Adding the
-    heading bonus put eight `LIVE_VERIFICATION_*` release records on top. The next idea was
-    to rank pages that `INDEX.md` routes to above ones it does not -- the repository's own
-    statement of what is reference material. That was built and measured, and it is false:
-    `INDEX.md` links **93 of the 126 pages**, every release record included, so it
-    discriminates nothing. It is not here because it did not work, and this paragraph is
-    the reason not to add it again.
+    **The heading bonus must not fire inside a fenced code block.** `# 5. One cheapest
+    stable T2V generation, no explicit --duration` is a shell comment in a release record;
+    scored as a heading it ranked 2nd of 136 for `--search duration` — exactly the noise
+    this ordering was added to remove.
 
-    What does work is the query having a second word. `r2v duration` returns five hits with
-    the rule first; `duration` alone returns 133 and says so, which is the honest answer to
-    a vague question. See `SCENARIO.md` § M2.
+    **What ranking cannot do.** `--search duration` has 136 hits and no ordering tried here
+    puts the rule first. Three were built and measured; the third reused `INDEX.md`'s
+    routing as a reference-vs-record signal, and it is false — `INDEX.md` links 93 of the
+    126 pages. It is not here because it did not work. What works is a second query word:
+    `r2v duration` returns 7 hits with the rule first. See `SCENARIO.md` § M3.
     """
     lowered = line.lower()
     occurrences = sum(lowered.count(term) for term in terms)
-    return (_HEADING_BONUS if line.lstrip().startswith("#") else 0) + occurrences
+    bonus = _CURATED_BONUS if curated else 0
+    if not in_fence and line.lstrip().startswith("#"):
+        bonus += _HEADING_BONUS
+    return bonus + occurrences
 
 
 def search(term: str) -> list[Match]:
-    """Every line mentioning *term*, curated answers first, then by relevance.
+    """Every line mentioning *term*, most relevant first.
 
     Whitespace splits the query into terms that must **all** appear on the line, so
     `--search "r2v duration"` narrows where a single common word cannot.
-
-    Two passes over the same corpus, deliberately not merged. `INDEX.md`'s shortcut rows
-    were each written to answer a question; a body-text hit only says where to look. When
-    both exist for one term, showing the body hit first buries the better answer.
     """
     terms = [t for t in term.strip().lower().split() if t]
     if not terms:
         return []
-    curated = [
-        Match(
-            topic="index",
-            file_name="INDEX.md",
-            line_no=line_no,
-            text=_plain(f"{question} -> {target}"),
-            curated=True,
-        )
-        for line_no, question, target in shortcuts()
-        if all(t in question.lower() or t in target.lower() for t in terms)
-    ]
-    seen = {(m.topic, m.line_no) for m in curated}
-    body: list[Match] = []
+    hits: list[Match] = []
     for topic in topics():
+        is_index = topic.file_name == "INDEX.md"
+        in_fence = False
         for line_no, raw in enumerate(read(topic).splitlines(), start=1):
+            if raw.lstrip().startswith(_FENCE):
+                in_fence = not in_fence
             lowered = raw.lower()
-            if not all(t in lowered for t in terms) or (topic.slug, line_no) in seen:
+            if not all(t in lowered for t in terms):
                 continue
-            body.append(
+            hits.append(
                 Match(
-                    topic=topic.slug,
                     file_name=topic.file_name,
                     line_no=line_no,
-                    text=_snippet(raw, terms[0]),
-                    curated=False,
-                    score=_score(raw, terms),
+                    text=_snippet(raw, terms),
+                    score=_score(
+                        raw,
+                        terms,
+                        curated=is_index and raw.lstrip().startswith('**"'),
+                        in_fence=in_fence,
+                    ),
                 )
             )
-    body.sort(key=lambda m: (-m.score, m.topic, m.line_no))
-    return curated + body
-
-
-def truncate_hits(matches: list[Match]) -> tuple[list[Match], int]:
-    """The hits to show and how many were held back. Curated rows are never held back."""
-    curated = [m for m in matches if m.curated]
-    body = [m for m in matches if not m.curated]
-    return curated + body[:_MAX_BODY_HITS], max(0, len(body) - _MAX_BODY_HITS)
+    hits.sort(key=lambda m: (-m.score, m.file_name, m.line_no))
+    return hits

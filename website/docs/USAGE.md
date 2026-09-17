@@ -10,6 +10,10 @@ CLI command reference. For environment variables see [CONFIGURATION](CONFIGURATI
 gflow [OPTIONS] COMMAND [ARGS]...
 
 Commands:
+  docs      Browse gflow's own documentation (offline, read-only).
+    (no args)                   List every topic and what it covers.
+    TOPIC                       Print one page as raw Markdown (pipes cleanly).
+    --search TERM               Matching lines, with docs/FILE.md:LINE positions.
   auth      Manage Google sessions for Flow.
     (no args)                   Show profile list, or trigger first login.
     login                       One-time interactive sign-in.
@@ -91,11 +95,13 @@ gflow docs --search "r2v duration"  # find the line that answers a question
 
 **A topic name is whatever you would type**: the slug (`user-guide`), the file name
 (`USER_GUIDE.md`), either case, or any unambiguous prefix (`conf` → `configuration`). An
-ambiguous prefix lists the candidates; an unknown name suggests the nearest ones.
+ambiguous prefix lists the candidates; an unknown name is matched against the topic
+list with `difflib`, so a typo (`usge`) is still offered `usage`.
 
-**Use two words when one is common.** `--search duration` matches 133 lines and says so;
-`--search "r2v duration"` returns five, the first being the host-specific rule. Search
-reports how many hits it held back rather than quietly truncating.
+**Use two words when one is common.** `--search duration` matches well over a hundred
+lines; the table header carries the total, shows the first 20 and says how many it held
+back. `--search "r2v duration"` narrows that to a handful with the host-specific rule
+at the top.
 
 Curated answers rank first: the `**"How do I …?"** →` rows in
 [INDEX](INDEX.md#topic-shortcuts) were each written to *be* an answer, so they come above
@@ -1620,7 +1626,7 @@ gflow models --json
 ## JSON output (`--json`)
 
 The generation commands (`image t2i` / `image i2i`, `video t2v` / `i2v` /
-`r2v`), `auth list`, and `gflow models` accept `--json` for machine-to-machine
+`r2v`), `auth list`, `gflow models`, and `gflow docs` accept `--json` for machine-to-machine
 use. When set:
 
 - The command emits **one** parseable JSON object (or array, for `auth list`)

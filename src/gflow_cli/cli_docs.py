@@ -3,16 +3,11 @@
 Three shapes, all read-only, all offline: list the topics, print one, or search for the
 line that answers a question. No network, no account, no credits, no database.
 
-**No MCP twin yet — deferred with a shape, not excluded on principle** (scenario #14,
-registered in `tests/mcp/test_cli_parity.py::_MCP_EXEMPT` so the decision is enforced
-rather than asserted here). "Agents do not need it" would be false: the consumer that
-filed #861 *is* an agent. What is true is that documentation is not a tool call. MCP
-models documents as **resources**, and wrapping `docs --search` as a tool would hand an
-agent a second, worse way to read prose its tool descriptions already carry.
-
-The upgrade path is a resources provider over `gflow_cli.docs_catalog`, which is why every
-decision — what a topic is, how a name resolves, how search ranks — lives in that module,
-Click-free and returning data. This file only renders.
+**No MCP twin yet — deferred with a shape, not excluded on principle** (registered in
+`tests/mcp/test_cli_parity.py::_MCP_EXEMPT`, so the decision is enforced rather than
+asserted here). Documentation is not a tool call: MCP models documents as **resources**,
+and the upgrade path is a resources provider over `gflow_cli.docs_catalog` — which is why
+every decision lives in that module, Click-free and returning data. This file renders.
 """
 
 from __future__ import annotations
@@ -26,26 +21,39 @@ from rich.table import Table
 
 from gflow_cli import docs_catalog, json_output
 from gflow_cli._cli_helpers import run_with_handlers
+from gflow_cli.docs_catalog import MAX_HITS
 from gflow_cli.errors import ConfigurationError
 
 console = Console()
 
+#: Widths that keep one topic on one terminal row. 126 topics rendered as wrapped
+#: two-line cells was 424 lines — seventeen screens nobody reads, which makes the
+#: listing decorative and `--search` the only real entry point. Truncated, it is one
+#: screenful per 40 topics and stays scannable; `--json` still carries the full text.
+_TOPIC_COL = 34
+_SUMMARY_COL = 72
 
-def _console_safe(text: str) -> str:
-    """*text*, guaranteed to survive this console's encoding.
+
+def _forgive_console_encoding() -> None:
+    """Make stdout replace characters it cannot encode instead of raising.
 
     The pages are full of `—`, `→` and `✅`, and a Windows console is frequently cp1252.
-    Printing straight into one raises `UnicodeEncodeError` and the command dies having
-    printed half a page — which is the exact shape of #846, shipped one release ago in a
-    decoration that had only ever run on a UTF-8 dev machine. A round-trip through the
-    stream's own encoding with replacement cannot raise, and is a no-op where the console
-    is UTF-8 (which is most of them).
+    Printing straight into one raises `UnicodeEncodeError` part-way through a page — the
+    exact shape of #846, shipped one release ago.
+
+    One `reconfigure` covers `click.echo`, Rich's tables **and** Rich's box-drawing
+    glyphs; the per-string helper this replaces covered only the strings it was wrapped
+    around, and a review proved it: replacing every one of its call sites with `str` left
+    the whole suite green. A stdout without `reconfigure` (a captured stream in a test
+    harness) is already text-mode and UTF-8, so there is nothing to forgive there.
     """
-    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if reconfigure is None:
+        return
     try:
-        return text.encode(encoding, errors="replace").decode(encoding, errors="replace")
-    except LookupError:  # pragma: no cover - an encoding name Python cannot resolve
-        return text.encode("ascii", errors="replace").decode("ascii")
+        reconfigure(errors="replace")
+    except (ValueError, OSError):  # pragma: no cover - a stream that refuses to be retuned
+        pass
 
 
 @click.command("docs")
@@ -55,16 +63,16 @@ def _console_safe(text: str) -> str:
     "term",
     default=None,
     metavar="TERM",
-    help="Find the lines mentioning TERM across every page, curated answers first.",
+    help="Find the lines mentioning TERM across every page, most relevant first.",
 )
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON.")
 def docs(topic: str | None, term: str | None, as_json: bool) -> None:
     """Browse gflow's own documentation.
 
     \b
-      gflow docs                       list every topic
-      gflow docs usage                 print one page
-      gflow docs --search duration     find the line that answers a question
+      gflow docs                          list every topic
+      gflow docs usage                    print one page
+      gflow docs --search "r2v duration"  find the line that answers a question
 
     Entirely offline and read-only: the pages ship inside the package.
     """
@@ -72,17 +80,22 @@ def docs(topic: str | None, term: str | None, as_json: bool) -> None:
 
 
 async def _run(topic: str | None, term: str | None, as_json: bool) -> None:
-    if topic and term:
+    _forgive_console_encoding()
+    # `is not None`, not truthiness, on BOTH sides: `--search ""` is a passed flag, and
+    # testing it for truth let `gflow docs usage --search ""` through the guard and then
+    # silently discard the topic.
+    if topic is not None and term is not None:
         raise ConfigurationError(
             detail=(
                 "pass a topic or --search, not both — `gflow docs <topic>` prints one "
                 "page, `gflow docs --search <term>` looks across all of them"
             ),
+            remediation_hint="Drop one of the two and re-run.",
         )
     if term is not None:
         _emit_search(term, as_json=as_json)
         return
-    if topic:
+    if topic is not None:
         _emit_page(topic, as_json=as_json)
         return
     _emit_topics(as_json=as_json)
@@ -109,10 +122,10 @@ def _emit_topics(*, as_json: bool) -> None:
         console.print("[yellow]No documentation is bundled with this installation.[/]")
         return
     table = Table(title=f"gflow documentation ({len(found)} topics)")
-    table.add_column("topic", style="bold", no_wrap=True)
-    table.add_column("what it covers", overflow="fold")
+    table.add_column("topic", style="bold", no_wrap=True, width=_TOPIC_COL)
+    table.add_column("what it covers", no_wrap=True, overflow="ellipsis", width=_SUMMARY_COL)
     for entry in found:
-        table.add_row(_console_safe(entry.slug), _console_safe(entry.summary or entry.title))
+        table.add_row(entry.slug, entry.summary or entry.title)
     console.print(table)
     console.print(
         "  Show one: [bold]gflow docs <topic>[/]   Find a line: [bold]gflow docs --search <term>[/]"
@@ -134,15 +147,17 @@ def _emit_page(topic: str, *, as_json: bool) -> None:
         return
     # Raw Markdown, not rendered: it pipes into a pager or an editor, and an agent reading
     # stdout wants the source rather than box-drawing characters.
-    click.echo(_console_safe(body))
+    click.echo(body)
 
 
 def _emit_search(term: str, *, as_json: bool) -> None:
-    shown, held_back = docs_catalog.truncate_hits(docs_catalog.search(term))
+    hits = docs_catalog.search(term)
+    shown, held_back = hits[:MAX_HITS], max(0, len(hits) - MAX_HITS)
     if as_json:
         json_output.emit(
             {
                 "term": term,
+                "total": len(hits),
                 "matches": [_match_json(m) for m in shown],
                 "omitted": held_back,
             }
@@ -151,16 +166,19 @@ def _emit_search(term: str, *, as_json: bool) -> None:
     if not shown:
         # Exit 0: "nothing mentions that" is a true answer to a valid question, not a
         # failure of the command.
-        console.print(f"No page mentions [bold]{_console_safe(term)}[/].")
+        console.print(f"No page mentions [bold]{term}[/].")
         return
-    table = Table(title=f"'{_console_safe(term)}' — {len(shown)} match(es)")
+    # The TOTAL in the title, not the shown count. They disagreed, and a header reading
+    # "20 match(es)" above a footer saying "and 116 more" is the command misreporting
+    # itself in the one place a reader checks whether to narrow.
+    table = Table(title=f"'{term}' — {len(hits)} match(es), showing {len(shown)}")
     table.add_column("where", style="bold", no_wrap=True)
     table.add_column("line", overflow="fold")
     for match in shown:
-        table.add_row(_console_safe(match.position), _console_safe(match.text))
+        table.add_row(match.position, match.text)
     console.print(table)
     if held_back:
-        console.print(f"  … and {held_back} more. Narrow the term, or read the page.")
+        console.print(f"  … and {held_back} more. Add a second word to narrow the search.")
 
 
 def _match_json(match: Any) -> dict[str, Any]:
@@ -169,5 +187,5 @@ def _match_json(match: Any) -> dict[str, Any]:
         "path": match.position,
         "line": match.line_no,
         "text": match.text,
-        "curated": match.curated,
+        "score": match.score,
     }

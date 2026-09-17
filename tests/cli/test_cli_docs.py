@@ -7,8 +7,10 @@ lives in `tests/integration/test_docs_ships_in_wheel.py`.
 
 from __future__ import annotations
 
-import io
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -98,6 +100,30 @@ def test_a_topic_name_is_never_used_to_build_a_path(docs_dir: Path, hostile: str
         docs_catalog.resolve(hostile)
 
 
+@pytest.mark.parametrize(
+    "hostile", ["../../../../etc/passwd", "usage\x00.md", r"..\..\Windows\win.ini"]
+)
+def test_a_hostile_name_is_refused_through_the_command_too(docs_dir: Path, hostile: str) -> None:
+    """The traversal tests above stop at `resolve()`. If `_emit_page` ever grew its own
+    path join, every one of them would still pass — so the refusal is asserted at the
+    surface a user actually reaches."""
+    result = _run(hostile)
+    assert result.exit_code == 11, result.output
+    assert "passwd" not in result.output or "no documentation topic" in result.output
+
+
+def test_a_refusal_carries_a_remediation_about_docs_not_transports(docs_dir: Path) -> None:
+    """Every refusal used to inherit ConfigurationError's default hint: "Run `gflow config
+    list-transports`" — advice about a transport registry, printed at someone who asked
+    for a page."""
+    # The error lane emits two JSON documents (the structured-log line, then the payload),
+    # so this asserts on the text rather than pretending it is one object.
+    output = _run("nosuchtopic", "--json").output
+    assert '"remediation_hint"' in output, output
+    assert "gflow docs" in output, output
+    assert "list-transports" not in output, output
+
+
 def test_an_unknown_topic_exits_11_and_suggests(docs_dir: Path) -> None:
     # Scenario 6: a class already in EXIT_CODE_MAP — no new exception, no new exit code.
     assert EXIT_CODE_MAP[ConfigurationError] == 11
@@ -109,10 +135,27 @@ def test_an_unknown_topic_exits_11_and_suggests(docs_dir: Path) -> None:
     assert "user-guide" in result.output
 
 
-def test_a_topic_and_a_search_together_are_refused(docs_dir: Path) -> None:
-    result = _run("usage", "--search", "flag")
+def test_a_typo_is_offered_the_nearest_topic(docs_dir: Path) -> None:
+    # `usge` shares no substring with `usage`, so the substring scan offered nothing and
+    # the documented promise ("suggests the nearest ones") was false until difflib.
+    result = _run("usge")
+    assert result.exit_code == 11, result.output
+    assert "usage" in result.output
+
+
+@pytest.mark.parametrize("term", ["flag", ""])
+def test_a_topic_and_a_search_together_are_refused(docs_dir: Path, term: str) -> None:
+    # The empty term is the interesting one: the guard used to test truthiness while the
+    # dispatch tested `is not None`, so `--search ""` slipped through and the topic was
+    # silently discarded.
+    result = _run("usage", "--search", term)
     assert result.exit_code == 11, result.output
     assert "not both" in result.output
+
+
+def test_an_empty_topic_is_refused_rather_than_listing_everything(docs_dir: Path) -> None:
+    result = _run("")
+    assert result.exit_code == 11, result.output
 
 
 # --- search -----------------------------------------------------------------
@@ -127,18 +170,48 @@ def test_a_search_with_no_matches_exits_zero(docs_dir: Path) -> None:
 def test_a_curated_index_answer_outranks_a_body_hit(docs_dir: Path) -> None:
     # Scenario 9. "generated files land" is an INDEX shortcut; "Environment" is body text.
     matches = docs_catalog.search("generated files land")
-    assert matches and matches[0].curated
+    assert matches
+    assert matches[0].file_name == "INDEX.md"
+    assert matches[0].score >= docs_catalog._CURATED_BONUS
 
 
-def test_search_still_works_when_the_index_has_no_parseable_shortcuts(
+def test_search_still_works_when_the_index_has_no_curated_rows(
     docs_dir: Path,
 ) -> None:
-    # Scenario 10: the shortcut parser is additive. If INDEX.md's format changes, search
-    # degrades to body text — it must not crash and must not silently return nothing.
+    # Scenario 10: the curated bonus is additive. If INDEX.md's format changes, search
+    # degrades to plain body text — it must not crash and must not silently return nothing.
     (docs_dir / "INDEX.md").write_text("# Index\n\nNo shortcuts here any more.\n", "utf-8")
-    assert docs_catalog.shortcuts() == []
     matches = docs_catalog.search("precedence")
-    assert matches and not matches[0].curated
+    assert matches and matches[0].file_name == "CONFIGURATION.md"
+
+
+def test_a_hash_inside_a_fenced_block_is_not_scored_as_a_heading(docs_dir: Path) -> None:
+    """A `#` in a code fence is a shell comment, not a section heading.
+
+    Scored as a heading it beat real prose: `# 5. One cheapest stable T2V generation, no
+    explicit --duration` — a line from a release record — ranked 2nd of 136 for
+    `--search duration`, which is the noise the ranking was added to remove.
+    """
+    (docs_dir / "USAGE.md").write_text(
+        "\n".join(
+            [
+                "# Usage",  # 1
+                "",  # 2
+                "A real heading follows.",  # 3
+                "",  # 4
+                "## widget options",  # 5 — a real heading
+                "",  # 6
+                "```bash",  # 7
+                "# widget --flag",  # 8 — a shell comment, not a heading
+                "```",  # 9
+            ]
+        ),
+        encoding="utf-8",
+    )
+    by_line = {m.line_no: m.score for m in docs_catalog.search("widget")}
+    heading, fenced = by_line[5], by_line[8]
+    assert heading >= docs_catalog._HEADING_BONUS, by_line
+    assert fenced < docs_catalog._HEADING_BONUS, by_line
 
 
 def test_all_query_terms_must_appear_on_the_line(docs_dir: Path) -> None:
@@ -159,32 +232,31 @@ def test_a_long_line_is_windowed_around_the_match(docs_dir: Path) -> None:
 # --- rendering --------------------------------------------------------------
 
 
-def test_a_page_full_of_non_ascii_prints_on_a_cp1252_console(
-    docs_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Scenario 4 — the #846 shape, one release old.
+@pytest.mark.parametrize("args", [["docs", "usage"], ["docs"], ["docs", "--search", "the"]])
+def test_the_command_survives_a_cp1252_console(args: list[str]) -> None:
+    """The #846 shape, one release old, asserted on the COMMAND rather than on a helper.
 
-    A Windows console is frequently cp1252 and the pages are full of `—`, `→` and `✅`.
-    Printing straight into one raises `UnicodeEncodeError` half a page in.
+    The first version of this test monkeypatched `sys.stdout` and called the encoding
+    helper directly. A council mutation proved it worthless: replacing every call site of
+    that helper with `str` left the whole suite green. Nothing required the command to
+    use it, and Rich's own box-drawing glyphs were never covered at all.
+
+    A subprocess with `PYTHONIOENCODING=cp1252` is the only arrangement where a real
+    `UnicodeEncodeError` can happen, so it is the only one that can fail.
     """
-    (docs_dir / "USAGE.md").write_text("# Usage\n\nit — works → always ✅\n", encoding="utf-8")
-    monkeypatch.setattr(
-        "sys.stdout", io.TextIOWrapper(io.BytesIO(), encoding="cp1252", errors="strict")
+    env = {**os.environ, "PYTHONIOENCODING": "cp1252"}
+    env.pop("PYTHONUTF8", None)
+    done = subprocess.run(  # noqa: S603 - fixed argv, no shell
+        [sys.executable, "-m", "gflow_cli.cli", *args],
+        capture_output=True,
+        text=True,
+        encoding="cp1252",
+        errors="replace",
+        env=env,
     )
-    from gflow_cli import cli_docs
-
-    rendered = cli_docs._console_safe("it — works → always ✅")
-    assert rendered.encode("cp1252")  # the assertion IS that this does not raise
-    assert "works" in rendered and "always" in rendered
-
-
-def test_console_safe_is_a_no_op_on_a_utf8_console(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "sys.stdout", io.TextIOWrapper(io.BytesIO(), encoding="utf-8", errors="strict")
-    )
-    from gflow_cli import cli_docs
-
-    assert cli_docs._console_safe("it — works → always ✅") == "it — works → always ✅"
+    assert done.returncode == 0, done.stderr
+    assert "UnicodeEncodeError" not in done.stderr, done.stderr
+    assert done.stdout.strip(), "the command printed nothing"
 
 
 # --- --json -----------------------------------------------------------------
@@ -216,6 +288,7 @@ def test_search_json_reports_positions_and_what_it_held_back(docs_dir: Path) -> 
     # The position must be the path that EXISTS — the file name, never the slug.
     assert first["path"] == "docs/USAGE.md:3", first
     assert payload["omitted"] == 0
+    assert payload["total"] == len(payload["matches"])
 
 
 def test_an_installation_with_no_pages_says_so_instead_of_crashing(

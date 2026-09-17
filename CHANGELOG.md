@@ -21,11 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   matching lines with `docs/FILE.md:LINE` beside each one. Read-only and offline — no
   network, no account, no credits.
 
-  **The pages now ship inside the wheel** (`gflow_cli/_docs`, +1.3 MB), because the user
-  this was filed for installed from PyPI and has no checkout; a command that could only
-  print GitHub links would not solve it. A build hook globs `docs/*.md`, so the topic list
-  cannot drift and `assets/`/`superpowers/` stay out — measured, after
-  `force-include` + `exclude` silently shipped 148 files it was told to exclude.
+  **The pages now ship inside the wheel** (`gflow_cli/_docs`; 1.3 MB of Markdown, **+0.58 MB
+  compressed** — the wheel goes 0.74 MB → 1.32 MB), because the user this was filed for
+  installed from PyPI and has no checkout; a command that could only print GitHub links
+  would not solve it. A build hook globs `docs/*.md`, so the topic list cannot drift and
+  `assets/`/`superpowers/` stay out — measured, after `force-include` + `exclude` silently
+  shipped 148 files it was told to exclude. The hook **refuses to build** when it finds no
+  pages: `Path.glob` on a missing directory returns empty, and `release.yml` is `uv build`
+  then publish, with nothing in between that would notice a wheel whose `gflow docs` is
+  empty for every user.
 
   Search returns a **line, windowed**, not a file name: the rule that prompted this issue
   lives inside a 4 000-character bullet in `MCP.md`, and answering "it is in MCP.md" leaves

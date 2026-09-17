@@ -220,6 +220,33 @@ async def test_an_agent_supplied_project_name_becomes_the_created_project_title(
 
 
 @pytest.mark.asyncio
+async def test_an_agent_supplied_project_name_titles_the_video_project_too(
+    temp_db: DataStore,
+) -> None:
+    """#864: the MCP video tool writes ``project_name`` exactly as the image tool does,
+    and ``gflow video t2v --project-name`` honours it — the video branch read nothing."""
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-t2v-project-name",
+        profile_name="default",
+        task_type="t2v",
+        payload={"prompt": "a crane", "aspect": "16:9", "project_name": "Client reel"},
+    )
+
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.create_project.return_value = MagicMock(project_id="project-v", title="Client reel")
+    fake_client.generate_video.return_value = _completed_video_result("media-v")
+
+    with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
+        await worker.process_task(task)
+
+    fake_client.create_project.assert_awaited_once_with(title="Client reel")
+    assert fake_client.generate_video.await_args.kwargs["project_id"] == "project-v"
+    worker.close()
+
+
+@pytest.mark.asyncio
 async def test_worker_process_t2v(temp_db: DataStore) -> None:
     repo = QueueRepository(temp_db)
     task = repo.enqueue_task(

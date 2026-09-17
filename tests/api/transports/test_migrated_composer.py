@@ -1557,7 +1557,7 @@ def test_migrated_can_serve_decides_what_the_new_host_takes() -> None:
 
     assert migrated_can_serve(_t2v(), "p1")
     assert migrated_can_serve(_t2v(model=VideoModel.VEO_3_1_FAST), "p1")
-    assert not migrated_can_serve(_t2v(), None)  # project creation not ported
+    assert not migrated_can_serve(_t2v(), None)  # the client creates it first (#864)
     assert not migrated_can_serve(_t2v(model=VideoModel.VEO_3_1_LITE_LOWER_PRIORITY), "p1")
     assert not migrated_can_serve(
         GenerateVideoRequest(prompt="x", mode=Mode.I2V, start_image_ref_name="a"), "p1"
@@ -2982,8 +2982,8 @@ async def test_run_images_refuses_an_unported_form_before_touching_the_page() ->
 
 
 async def test_run_images_without_a_project_is_a_configuration_error() -> None:
-    """A fresh project can only be made through the labs gallery, so the caller must
-    name one. Exit 11, not a mid-run failure after the editor is already mounted.
+    """The client creates the project before this runs (#864); reaching it without one
+    is a caller bug. Exit 11, not a mid-run failure after the editor is already mounted.
     """
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.transports.migrated_composer import run_images

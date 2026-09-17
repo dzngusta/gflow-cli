@@ -331,6 +331,12 @@ class FlowWorker:
                         out_dir=out_dir,
                         settings=settings,  # same rationale as the image path above
                     ) as client:
+                        # #864: as `gflow video t2v --project-name` does. Without a
+                        # name, client.generate_video creates the project itself.
+                        project_name = task.payload.get("project_name")
+                        if project_id is None and project_name:
+                            created = await client.create_project(title=project_name)
+                            project_id = created.project_id
                         # Resolve @-mentions and expand --tool specs (shared helper).
                         from gflow_cli.services.mentions import resolve_and_apply
 

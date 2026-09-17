@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`--aspect 3:4` images now run on `flow.google.com`.** Flow's image settings there
+  render a fifth aspect radio (`3:4`) that the 2026-09-08 enumeration did not see, so gflow
+  refused it with exit 36. All five image aspects are now driven on both hosts.
+  ([#864](https://github.com/ffroliva/gflow-cli/issues/864))
 - **`gflow video i2v --end-frame <local file>` now runs on `flow.google.com`.** Start+end
   frame interpolation was the last i2v form the migrated composer refused: it exited 36
   ("an end frame is not ported yet") on every account Flow has moved. Both frames are now
@@ -38,6 +42,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   counts as start+end interpolation for any model, and the submit observer accepts the
   bare `batchexecute` reply (no `rpcids` param) that the interpolation rpc answers on.
   ([#639](https://github.com/ffroliva/gflow-cli/issues/639))
+- **Generating without a project works again on accounts Flow serves from
+  `flow.google.com`, and it no longer tells you to log in.** Every run without `--project`
+  (CLI) or `project` (MCP) starts by creating a project through labs.google's
+  `project.createProject`. Google has retired that route: it answers *"Flow RPCs have been
+  deprecated and disabled"* (404), or 401 for a session holding no labs token — measured
+  12/12 on four profiles. gflow reported the 401 as *"Authentication expired — run `gflow
+  auth login`"*, which no login could fix. When that route refuses, gflow now creates the
+  project on flow.google.com's projects page and reads the new id and title from Flow's own
+  reply; `gflow project create` and `gflow project rename` work there the same way.
+  `GFLOW_CLI_FLOW_HOST=labs.google` keeps the labs route and its error. Video runs without a
+  project now get it created up front, like images, so they route exactly as if you had
+  passed `--project`; MCP `gflow_generate_video` also honours `project_name`, which it
+  accepted and then ignored. Thanks to @iceblue03 (#863) and @ChandraLiuswanto (#561) for
+  the reports. ([#864](https://github.com/ffroliva/gflow-cli/issues/864),
+  [#561](https://github.com/ffroliva/gflow-cli/issues/561))
+- **An MCP server no longer fails a call because another call holds the profile.** Two
+  calls on one profile inside one server — a client retry, two agents sharing a server —
+  now run one after the other instead of the second failing with `ProfileLockedError`, and
+  a profile held by another process (a CLI run) is waited out for up to 180 s. A
+  `GFLOW_CLI_LEASE_WAIT_SECONDS` you set yourself, in the environment or a `.env`, still
+  wins. The CLI keeps failing fast. Thanks to @iceblue03 (#862).
+  ([#864](https://github.com/ffroliva/gflow-cli/issues/864))
 
 ## [0.77.1] — 2026-09-17
 

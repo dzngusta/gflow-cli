@@ -190,11 +190,11 @@ Generate 1–4 images from one text prompt, or run a shell-friendly batch of 1�
 prompts through one Flow session/project.
 
 > **Migrated `flow.google.com` accounts (#639):** T2I is supported with Nano Banana 2
-> (`nano2`) and Nano Banana Pro (`nano-pro`), the four aspects measured there (`16:9`,
-> `4:3`, `1:1`, `9:16`), and count 1–4. **`--project <id>` is required** — a fresh project
-> can only be created through the labs gallery, so without it the run exits 11. The
+> (`nano2`) and Nano Banana Pro (`nano-pro`), all five aspects (`16:9`,
+> `4:3`, `1:1`, `3:4`, `9:16`), and count 1–4. Without `--project`, gflow creates a fresh project
+> there first ([#864](https://github.com/ffroliva/gflow-cli/issues/864)). The
 > migrated page owns its reCAPTCHA + `ogiZ0b` submit. Imagen 4, Agent instructions,
-> character/entity references, `3:4` and `image batch` remain unavailable on that host and
+> character/entity references and `image batch` remain unavailable on that host and
 > fail before submit.
 
 ```text
@@ -337,9 +337,9 @@ A 4-image run with `--out ./logos/` produces:
 Generate 1–4 images by blending a text prompt with one or more reference images. Same flag set as `t2i`, plus a required `--ref` (repeatable).
 
 > **Migrated `flow.google.com` accounts (#639):** local-file `--ref` values are supported
-> and each uploaded media id is verified in the outgoing `ogiZ0b` body. **`--project <id>`
-> is required here** (exit 11 without it). UUID refs, `@Name` / `--reference-entity`, Agent
-> instructions, Imagen 4 and the `3:4` aspect remain unavailable on that host and fail
+> and each uploaded media id is verified in the outgoing `ogiZ0b` body. Without `--project`,
+> gflow creates one there first (#864). UUID refs, `@Name` / `--reference-entity`, Agent
+> instructions and Imagen 4 remain unavailable on that host and fail
 > before submit rather than silently degrading to T2I.
 
 ```text
@@ -605,8 +605,9 @@ Options:
 
 > **Two Flow frontends (#639).** Under the default `GFLOW_CLI_FLOW_HOST=auto`, `t2v` with
 > `--project <id>` runs on Flow's migrated `flow.google.com` host on every account; without
-> `--project` an unmoved account falls back to the labs driver, and a moved account exits 11
-> (`--project` is required there — project creation is not ported). `i2v` with a local
+> `--project`, gflow first creates a project — through labs.google where that route answers,
+> otherwise on flow.google.com ([#864](https://github.com/ffroliva/gflow-cli/issues/864)) —
+> and the run then routes exactly as if you had passed it. `i2v` with a local
 > `--initial-frame` runs there too — **including with a local `--end-frame`**
 > (start+end interpolation, #639; see [`gflow video i2v`](#gflow-video-i2v)) — as does
 > `r2v` from local `--ref` files (see [`gflow video r2v`](#gflow-video-r2v)). An end frame
@@ -1842,7 +1843,7 @@ shell scripts can branch on the failure mode without parsing stderr.
 | `33` | — (`gflow doctor` verdict) | Doctor found warn/fail findings — a successful diagnosis, not an error class | Review the report; see [`gflow doctor`](#gflow-doctor) |
 | `34` | `SyncPartialError`    | `gflow data sync` failed on some projects but succeeded on others — completed writes stay committed | Retryable: re-run the same command; it resumes with what is still nameless (see [`gflow data sync`](#gflow-data-sync)) |
 | `35` | `ExtendUnavailableError` | No Veo extend model is orderable for this account and aspect — the extend family is tier-gated and there is no square variant. **Never auto-retry**: a tier gate does not clear on its own. |
-| `36` | `FlowHostMigratedError` | Flow served the project from `flow.google.com` and the request could not be represented by the migrated composer, or `GFLOW_CLI_FLOW_HOST=labs.google` disabled it. Supported today: `video t2v`; local-file video i2v/r2v; `image t2i`; and local-file `image i2i`. Image UUID/entity/instruction/Imagen-4 forms, `image batch`, and the `3:4` image aspect remain unsupported. Not selector drift (23) | **Not retryable.** Use one of the supported forms — `--project` is required for images as well as video — or the REST surface (`gflow project list`, `gflow data …`); follow #639 for the remaining matrix |
+| `36` | `FlowHostMigratedError` | Flow served the project from `flow.google.com` and the request could not be represented by the migrated composer, or `GFLOW_CLI_FLOW_HOST=labs.google` disabled it. Supported today: `video t2v`; local-file video i2v/r2v; `image t2i`; and local-file `image i2i`. Image UUID/entity/instruction/Imagen-4 forms and `image batch` remain unsupported. Not selector drift (23) | **Not retryable.** Use one of the supported forms, or the REST surface (`gflow project list`, `gflow data …`); follow #639 for the remaining matrix |
 | `37` | `InsufficientCreditsError` | The account's balance is short **for the model it asked for**, so Flow **replaced** the submit control with its `Insufficient credits warning` instead of disabling it. Short, not necessarily empty: measured 2026-09-07, an account holding **50** credits requesting `--model veo-quality` (**100**) rendered the warning. Explicitly **not** selector drift (23): reporting it as drift told users to file a frontend bug over a credit shortfall | Check the balance with `gflow credits user`, then pick a cheaper `--model` (`veo-lite` costs 10), top up, or wait for the allowance to reset. Nothing was submitted, so no credit was spent. `gflow image` draws on a separate daily quota and may still work |
 | `38` | `FlowAccountChooserError` | The post-migration hop landed on Google's account chooser and the profile's recorded account (`.gflow_account`) could not be selected automatically (row absent, click-through did not return to the editor, or `--account` mismatch) | **Not retryable**: run `gflow auth login --profile <name>` and complete the chooser manually, while signed in as the recorded account (re-run `gflow auth login` if the chooser offers a different session) |
 | `39` | `FlowAccessUnavailableError` | Flow loaded and routed to its own "you don't have access" screen (`<flow-pinhole-unavailable-screen>`): this Google account has no Flow entitlement. Detected by component, not by URL — the hop is client-side (`flow.google.com/` answers 200) and the path varies (`/unavailable`, `/u/8/unavailable`). Explicitly **not** auth expiry (3/8) and **not** selector drift (23): nothing expired and nothing drifted | **Not retryable, and signing in again cannot change it.** Flow needs an age-verified account in a supported region on a Google AI Plus/Pro/Ultra or qualifying Workspace plan — check which applies at [Google's eligibility page](https://support.google.com/flow/answer/16353333) and open https://flow.google.com in a browser on this account to confirm |

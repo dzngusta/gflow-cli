@@ -146,7 +146,8 @@ async def test_a_composer_run_does_not_route_the_next_request_by_its_page(
 async def test_unmoved_account_without_a_project_keeps_the_labs_driver(
     harness: dict[str, Any],
 ) -> None:
-    """Project creation is not ported to the new host, so the labs gallery does it."""
+    """No project reaches the transport only past the client, which creates one (#864);
+    here the labs arm stays exactly as it was."""
     with pytest.raises(_LabsDriverTouchedError):
         await harness["transport"].generate_video(request=_req(), project_id=None)
     assert harness["run_video"] == []

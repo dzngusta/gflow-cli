@@ -36,17 +36,21 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 from urllib.parse import unquote_plus, urlsplit
 from uuid import uuid4
 
 import structlog
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
-from gflow_cli.api.dto import GeneratedImage
+from gflow_cli.api.dto import GeneratedImage, ProjectInfo
 from gflow_cli.api.image import Aspect as ImageAspect
 from gflow_cli.api.image import Model as ImageModel
-from gflow_cli.api.transports._common import extract_project_id, raise_if_known_landing
+from gflow_cli.api.transports._common import (
+    extract_project_id,
+    raise_if_known_landing,
+    safe_page_url,
+)
 from gflow_cli.api.transports.batchexecute import (
     GenerationRecord,
     generation_record,
@@ -76,6 +80,8 @@ from gflow_cli.errors import (
 from gflow_cli.redaction import redact_sensitive_text
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from playwright.async_api import Page
 
     from gflow_cli.api.image import GenerateImageRequest
@@ -369,10 +375,7 @@ ASPECT_LIGATURE: dict[Aspect, str] = {
     Aspect.LANDSCAPE: "crop_16_9",
     Aspect.PORTRAIT: "crop_9_16",
 }
-#: Ligature per aspect. Only the four in :data:`IMAGE_ASPECT_LIGATURE_MEASURED`
-#: were observed on the migrated host; ``crop_portrait`` is this driver's guess at
-#: what a 3:4 radio WOULD be called, kept so that adding it later is a one-line
-#: change, and deliberately not reachable until something measures it.
+#: Ligature per aspect radio in the migrated composer's image settings.
 IMAGE_ASPECT_LIGATURE: dict[ImageAspect, str] = {
     ImageAspect.LANDSCAPE: "crop_16_9",
     ImageAspect.PORTRAIT: "crop_9_16",
@@ -381,17 +384,11 @@ IMAGE_ASPECT_LIGATURE: dict[ImageAspect, str] = {
     ImageAspect.PORTRAIT_THREE_FOUR: "crop_portrait",
 }
 
-#: The aspects actually enumerated in the migrated composer's radiogroup —
-#: ``[crop_16_9*, crop_landscape, crop_square, crop_9_16]``, one account,
-#: 2026-09-08 (docs/superpowers/spikes/2026-09-08-migrated-image-submit-wire.md).
-IMAGE_ASPECT_LIGATURE_MEASURED: frozenset[ImageAspect] = frozenset(
-    {
-        ImageAspect.LANDSCAPE,
-        ImageAspect.PORTRAIT,
-        ImageAspect.SQUARE,
-        ImageAspect.LANDSCAPE_FOUR_THREE,
-    },
-)
+#: The aspects actually enumerated in that radiogroup. Four on 2026-09-08
+#: (docs/superpowers/spikes/2026-09-08-migrated-image-submit-wire.md); five on
+#: 2026-09-17, when ``crop_portrait`` (3:4) appeared between ``crop_square`` and
+#: ``crop_9_16`` (scripts/dev/spike_migrated_aspect_radios.py, #864).
+IMAGE_ASPECT_LIGATURE_MEASURED: frozenset[ImageAspect] = frozenset(IMAGE_ASPECT_LIGATURE)
 IMAGE_MODEL_MENU_MATCHERS: dict[ImageModel, ModelMenuMatcher] = {
     # Exact enough to exclude the separate "Nano Banana 2 Lite" entry without
     # depending on the decorative banana glyph that precedes both live labels.
@@ -488,9 +485,10 @@ def migrated_can_serve(request: GenerateVideoRequest, project_id: str | None) ->
     image-to-video / reference-to-video from **local** files (start and end frames
     alike), in an existing project, with a model the new host offers (or none).
     Everything else — a frame or reference by UUID or ``@Name``, character
-    references, a fresh project, a model this host has not been observed to
-    offer — is not ported yet, so an account still served labs.google keeps the
-    labs driver for it.
+    references, a model this host has not been observed to offer — is not ported
+    yet, so an account still served labs.google keeps the labs driver for it. A
+    request with no project is not decided here: ``FlowApiClient.generate_video``
+    creates one before any route is chosen (#864).
 
     Note what that last clause does NOT claim. A 2026-09-14 survey found
     ``labs.google/fx/tools/flow`` returning **HTTP 308** on the three profiles here
@@ -523,12 +521,9 @@ def _unported_image_form(request: GenerateImageRequest) -> str | None:
     if request.model not in IMAGE_MODEL_MENU_MATCHERS:
         return f"the {request.model.value} model"
     if request.aspect not in IMAGE_ASPECT_LIGATURE_MEASURED:
-        # The aspect radiogroup was enumerated once on this host and carried four
-        # radios — crop_16_9, crop_landscape, crop_square, crop_9_16 — with no
-        # crop_portrait. Refusing here is the difference between exit 36 ("gflow
-        # has not ported this") and exit 23 ("file a frontend-drift bug"), and the
-        # second is a lie: nothing is drifting. If a later enumeration finds the
-        # radio, move the aspect into the measured map rather than deleting this.
+        # Every aspect gflow knows is measured today (#864). Kept so a new aspect
+        # added to the enum is refused as unported (exit 36), never left to miss its
+        # radio and report frontend drift (exit 23) about a frontend behaving fine.
         return f"the {request.aspect.value} aspect ratio"
     return None
 
@@ -2557,9 +2552,9 @@ async def run_video(
 
     t2v, i2v from local start (and end) frames (uploaded through the editor and
     bound on the Start/End chips by file name), and r2v from local ``--ref``
-    files. A frame or reference given by UUID / ``@Name`` is not ported yet; a
-    fresh project can only be created through the labs gallery, so the caller
-    must name one (``--project``).
+    files. A frame or reference given by UUID / ``@Name`` is not ported yet. The
+    project is created by ``FlowApiClient`` before this runs (#864), so reaching
+    here without one means a caller bypassed the client.
     """
     unported = _unported_form(request)
     if unported is not None:
@@ -2575,9 +2570,8 @@ async def run_video(
     if not pid:
         raise ConfigurationError(
             detail=(
-                "generating on the migrated flow.google.com host needs an existing project: "
-                "pass --project <id> (see `gflow project list` / `gflow project create`) — "
-                "creating one from the editor is not ported to this host yet"
+                "generating on the migrated flow.google.com host needs a project: pass "
+                "--project <id> (see `gflow project list` / `gflow project create`)"
             ),
         )
     log.info("migrated.dispatch", project_id=pid, mode=request.mode.value)
@@ -2689,3 +2683,141 @@ async def run_images(
         request,
         reference_ids=reference_ids,
     )
+
+
+# --- projects (#864) ---------------------------------------------------------------
+#
+# labs.google's `project.createProject` now answers 404 "Flow RPCs have been deprecated
+# and disabled" (401 for a session carrying no labs token) on every profile measured, so
+# a project is created and renamed here instead. Both operations were measured on
+# 2026-09-17 (docs/superpowers/spikes/2026-09-17-project-create-on-flow-google-com.md),
+# and both replies state the outcome, so success is read from the wire, not the URL.
+
+MIGRATED_ROOT_URL = "https://flow.google.com/"
+#: The projects page's floating `add` button — the page's only creation control.
+NEW_PROJECT_BUTTON = "flow-projects-page button:has(mat-icon:text-is('add'))"
+#: The project header's editable title.
+PROJECT_TITLE_INPUT = "flow-editable-text input"
+#: `["projects/*", [null, [title]], …]` -> `[project_id, [title]]`
+CREATE_PROJECT_RPC = "jHPbke"
+#: `["projects/<id>", [title], [["project_title"]], …]` -> `[title]`
+RENAME_PROJECT_RPC = "o8DA4"
+
+
+def _as_list_any(node: object) -> list[object]:
+    return cast("list[object]", node) if isinstance(node, list) else []
+
+
+async def _wait_anchor(
+    page: Page, selector: str, *, named: str, requested: str, at: str, timeout_s: float
+) -> Any:
+    locator = page.locator(selector).first
+    try:
+        await locator.wait_for(state="visible", timeout=int(timeout_s * 1000))
+    except PlaywrightTimeoutError as e:
+        await raise_if_known_landing(page, requested=requested, at=at)
+        raise UiSelectorDriftError(
+            detail=(
+                f"migrated host: the {named} ({selector}) did not become visible within "
+                f"{timeout_s:.0f}s on {safe_page_url(page.url)} (host=migrated)"
+            ),
+        ) from e
+    return locator
+
+
+async def _rpc_reply(
+    page: Page, rpcid: str, action: Callable[[], Awaitable[None]], *, timeout_s: float
+) -> Any:
+    """Run ``action`` and return the payload of the first ``rpcid`` frame the page gets."""
+    reply: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+
+    async def on_response(response: Any) -> None:
+        if reply.done() or "batchexecute" not in str(getattr(response, "url", "")):
+            return
+        try:
+            text = await response.text()
+        except Exception:  # noqa: BLE001 - an aborted body is not our frame
+            return
+        for rid, payload in parse_frames(text):
+            if rid == rpcid and not reply.done():
+                reply.set_result(payload)
+
+    page.on("response", on_response)
+    try:
+        await action()
+        try:
+            return await asyncio.wait_for(reply, timeout=timeout_s)
+        except TimeoutError as e:
+            raise TransportTimeoutError(
+                detail=(
+                    f"flow.google.com did not answer {rpcid} within {timeout_s:.0f}s "
+                    f"on {safe_page_url(page.url)} (host=migrated)"
+                ),
+            ) from e
+    finally:
+        page.remove_listener("response", on_response)
+
+
+async def create_project(page: Page, title: str, *, timeout_s: float = 30.0) -> ProjectInfo:
+    """Create a project through flow.google.com's projects page, titled ``title``.
+
+    Leaves ``page`` on the new project, which is where every caller goes next."""
+    await page.goto(MIGRATED_ROOT_URL, wait_until="domcontentloaded", timeout=45_000)
+    await MigratedComposer._dismiss_dialog(page)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    button = await _wait_anchor(
+        page,
+        NEW_PROJECT_BUTTON,
+        named="new-project button",
+        requested=MIGRATED_ROOT_URL,
+        at="migrated.create_project",
+        timeout_s=timeout_s,
+    )
+    payload = await _rpc_reply(
+        page, CREATE_PROJECT_RPC, lambda: button.click(timeout=15_000), timeout_s=timeout_s
+    )
+    reply = _as_list_any(payload)
+    project_id: object = reply[0] if reply else None
+    if not isinstance(project_id, str) or not UUID_RE.fullmatch(project_id):
+        raise WireFormatError(
+            detail=f"{CREATE_PROJECT_RPC} reply carried no project id: {str(payload)[:200]}",
+            route=f"batchexecute:{CREATE_PROJECT_RPC}",
+        )
+    log.info("migrated.project_created", project_id=project_id)
+    names = _as_list_any(reply[1]) if len(reply) > 1 else []
+    created: object = names[0] if names else None
+    if title and created != title:
+        await rename_project(page, project_id, title, timeout_s=timeout_s)
+        created = title
+    return ProjectInfo(project_id=project_id, title=str(created or ""))
+
+
+async def rename_project(
+    page: Page, project_id: str, title: str, *, timeout_s: float = 30.0
+) -> None:
+    """Rename a project through its header title on flow.google.com."""
+    target = MIGRATED_PROJECT_URL.format(project_id=project_id)
+    if not str(getattr(page, "url", "") or "").startswith(target):
+        await page.goto(target, wait_until="domcontentloaded", timeout=45_000)
+    await MigratedComposer._dismiss_dialog(page)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    field = await _wait_anchor(
+        page,
+        PROJECT_TITLE_INPUT,
+        named="project title input",
+        requested=target,
+        at="migrated.rename_project",
+        timeout_s=timeout_s,
+    )
+
+    async def submit() -> None:
+        await field.fill(title)
+        await field.press("Enter")
+
+    payload = await _rpc_reply(page, RENAME_PROJECT_RPC, submit, timeout_s=timeout_s)
+    echo = _as_list_any(payload)
+    echoed: object = echo[0] if echo else None
+    if echoed != title:
+        raise WireFormatError(
+            detail=f"{RENAME_PROJECT_RPC} echoed title {echoed!r}, expected {title!r}",
+            route=f"batchexecute:{RENAME_PROJECT_RPC}",
+        )
+    log.info("migrated.project_renamed", project_id=project_id)

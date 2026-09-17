@@ -124,23 +124,23 @@ def test_unported_image_forms_are_named_and_refused_pre_submit() -> None:
     assert _unported_image_form(_request(model=Model.IMAGEN_3_5)) is not None
 
 
-def test_only_the_measured_aspects_are_offered_and_three_four_is_refused() -> None:
-    """3:4 has no radio in the enumerated aspect row, so it must be refused as an
-    unported form (exit 36) — never left to miss its selector and surface as
-    UiSelectorDriftError (exit 23), which tells the user to file a frontend bug
-    about a frontend that is behaving correctly.
+def test_every_image_aspect_flow_renders_is_offered() -> None:
+    """All five of gflow's image aspects are served on flow.google.com.
+
+    The 2026-09-08 enumeration found four radios and 3:4 was refused (exit 36). The
+    2026-09-17 re-enumeration (scripts/dev/spike_migrated_aspect_radios.py) found five:
+    ``crop_16_9, crop_landscape, crop_square, crop_portrait, crop_9_16``.
     """
     from gflow_cli.api.transports.migrated_composer import (
+        IMAGE_ASPECT_LIGATURE,
         IMAGE_ASPECT_LIGATURE_MEASURED,
         _unported_image_form,
     )
 
-    for aspect in IMAGE_ASPECT_LIGATURE_MEASURED:
+    assert set(Aspect) == IMAGE_ASPECT_LIGATURE_MEASURED
+    assert IMAGE_ASPECT_LIGATURE[Aspect.PORTRAIT_THREE_FOUR] == "crop_portrait"
+    for aspect in Aspect:
         assert _unported_image_form(_request(aspect=aspect)) is None, aspect
-    assert Aspect.PORTRAIT_THREE_FOUR not in IMAGE_ASPECT_LIGATURE_MEASURED
-    refusal = _unported_image_form(_request(aspect=Aspect.PORTRAIT_THREE_FOUR))
-    assert refusal is not None
-    assert "aspect" in refusal
 
 
 def test_image_submit_body_requires_every_uploaded_reference() -> None:

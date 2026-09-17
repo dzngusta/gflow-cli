@@ -1249,6 +1249,13 @@ class MigratedComposer:
 
     async def _open_pane(self, page: Page) -> Any:
         await self._dismiss_cookie_bar(page)
+        # And again here, not only in `ensure_editor` (#859). That probe runs one frame
+        # after `domcontentloaded`, before Angular has rendered anything, so the promo
+        # modal it is looking for does not exist yet and `is_visible()` returns False --
+        # which is why a run blocked by one logs NEITHER `migrated.dialog_dismissed` nor
+        # `migrated.dialog_not_dismissed`. By the time the first real click is made the
+        # dialog IS up, and its CDK backdrop is what the post-mortem named.
+        await self._dismiss_dialog(page)
         trigger = page.locator(READY_ANCHOR).first
         try:
             # Visibility, not `count()`. Agent mode leaves the trigger in the DOM under a

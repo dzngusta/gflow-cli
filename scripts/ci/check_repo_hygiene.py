@@ -101,6 +101,11 @@ ROOT_DOC_ALLOWLIST: frozenset[str] = frozenset(
         "RELEASE.md",
         "ROADMAP.md",
         "conftest.py",  # root pytest conftest (basetemp + directory-based marker tagging)
+        # hatchling resolves a build hook's `path` from the project root and defaults to
+        # this exact name, so it cannot live under scripts/ without the config pointing
+        # back out to the root anyway. Same category as conftest.py: a root Python file
+        # the tooling requires there, not a stray artefact (#861).
+        "hatch_build.py",
     }
 )
 

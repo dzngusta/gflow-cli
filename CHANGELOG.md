@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.77.1] — 2026-09-17
+
 ### Fixed
 
 - **A clean Windows install could not run a single command.** `configure_logging`
@@ -5347,7 +5349,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.77.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.77.1...HEAD
+[0.77.1]: https://github.com/ffroliva/gflow-cli/compare/v0.77.0...v0.77.1
 [0.77.0]: https://github.com/ffroliva/gflow-cli/compare/v0.76.0...v0.77.0
 [0.76.0]: https://github.com/ffroliva/gflow-cli/compare/v0.75.0...v0.76.0
 [0.75.0]: https://github.com/ffroliva/gflow-cli/compare/v0.74.0...v0.75.0

@@ -4,6 +4,49 @@
 
 ## Current release
 
+**v0.77.1 — alpha.** A patch release: four fixes, and one of them made the package
+unusable on a clean Windows install.
+
+**A clean Windows install could not run a single command (#846).** `configure_logging`
+renders TEXT logs with `structlog.dev.ConsoleRenderer(colors=True)`, whose Windows
+`_init_terminal` raises `SystemError` outright when `colorama` is missing — and `colorama`
+was never declared. The call sits in the Click *group* callback, so it fired before any
+subcommand body: every interactive command aborted with a traceback that named structlog
+and never gflow, and the README's Windows quick-start failed as written. Nothing in the
+runtime closure supplied it; the only `colorama` edge in `uv.lock` came from **pytest**, a
+dev dependency, so every developer machine and every CI job had it transitively and no gate
+could see the gap. Reported from outside with the root cause already found. Reproduced on a
+clean Python 3.13 venv, fixed by declaring the dependency, and verified by reinstalling into
+that same venv — on both the CLI and the MCP stdio server.
+
+**The sign-in window now closes on a migrated account (#849).** v0.77.0 listed this under
+"not fixed here". The auto-close detector watched the `labs.google` session endpoint, which
+for a migrated account never mints a session, so the one oracle it had could not answer: the
+window sat open for the full 600 s while the banner promised gflow would close it. Worse, the
+timeout propagated *past* verification, so a sign-in that had completed perfectly was
+discarded unread and returned exit 12 for a login that worked — the first thing a new user on
+a migrated account meets. gflow now also stops waiting when the jar carries both halves of a
+migrated session, and a timeout reads the disk before failing. The authentication decision
+stays with `verify_flow_profile`; no cookie was promoted to a proof of login.
+
+**`gflow update` stops reporting the version of a half-replaced install (#848).** It now
+verifies that the upgraded package imports in a fresh interpreter, rather than trusting the
+metadata of a broken one.
+
+**The migrated-host address scan was quadratic (#852).** `findall` retried from every start
+position over a 1.28 MB response whose character class covers the whole URL-safe base64
+alphabet: 40 000 chars took 12.07 s, synchronously, inside an `async def` — so a stall blocked
+the event loop and cancellation could not land. Anchoring on the literal `@` and reading the
+local part backwards over the RFC 5321 64-character cap makes the work proportional to the
+number of `@` in the document. Same output for every address shape, Workspace and custom
+domains included; 40 000 chars now scan in under a millisecond.
+
+**Not fixed here:** `gflow credits` on migrated accounts (#795), and the agent-only composer
+driver (#799, #824 open).
+
+<details>
+<summary>v0.77.0 — accounts Google moved to <code>flow.google.com</code> can sign in again</summary>
+
 **v0.77.0 — alpha.** **Accounts Google moved to `flow.google.com` can sign in again — including
 Google Workspace accounts, which an earlier attempt would have excluded without saying so.**
 
@@ -49,10 +92,13 @@ auto-close detector polls the same labs endpoint that never answers, so it spins
 timeout while the banner promises otherwise (recorded on #791). Also unfixed: `gflow credits` on
 migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
+</details>
+
 ## Milestone history
 
 | Milestone | Status |
 |---|---|
+| A clean Windows install can run at all — `colorama` declared, so `ConsoleRenderer` stops aborting every interactive command before any subcommand body (#846); the sign-in window closes itself on a migrated account and a completed login stops being discarded unread as exit 12 (#849); `gflow update` detects a half-replaced install (#848); the migrated-host address scan goes linear (#852) | ✅ done (v0.77.1) |
 | An account with no Flow access is told so instead of being shown a selector-drift error and asked to file a bug — exit 39, read from the rendered unavailable screen rather than a URL or a status code (#833); the containerised sign-in works on Windows and pins its own version (#830); an MCP agent's `project_name` is finally consumed, found by a new AST gate on the MCP→worker payload keys (#628); the Official MCP Registry publishes itself on release via OIDC (#829) | ✅ done (v0.76.0) |
 | Every local file the migrated driver uploads is run-unique, so a re-run stops binding a stale look-alike, and the Frames picker is confirmed when it does not commit on the pick — covering `video i2v`, `video r2v` and `image i2i` alike (#792); `gflow credits` stops sending migrated accounts into a re-login loop at the raise site they actually hit (#795); an agent-only `flow.google.com` composer exits 25 `retryable: false` instead of 23 (#799) | ✅ done (v0.74.0) |
 | Four error paths stop lying about what went wrong: a click that never lands reports the actionability condition that failed instead of a bare timeout (#776), a known Flow landing is named rather than blamed on the selector (#756), Google's auth URLs are stripped from error messages (#777), and the post-migration account chooser auto-selects instead of stalling (#763/#764) | ✅ done (v0.73.0) |

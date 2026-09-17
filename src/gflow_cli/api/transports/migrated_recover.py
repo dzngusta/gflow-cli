@@ -70,6 +70,99 @@ def _clip_url(project_id: str, media_id: str) -> str:
     return MIGRATED_CLIP_URL.format(project_id=project_id, media_id=media_id)
 
 
+async def _await_signed_record(
+    page: Page, *, media_id: str, project_id: str, wait_s: float
+) -> dict[str, Any]:
+    """Open the clip's route and return the first status record Flow reports for it.
+
+    The app fetches the clip's status on ``as29s`` as the route loads; that reply is the
+    only source of a freshly signed URL, because signed URLs expire and are therefore
+    never persisted in the catalog.
+    """
+    found: dict[str, Any] = {}
+
+    async def on_response(response: Any) -> None:
+        if found or "batchexecute" not in str(getattr(response, "url", "")):
+            return
+        try:
+            text = await response.text()
+        except Exception:  # noqa: BLE001 - an aborted/streamed body is not our frame
+            return
+        _collect(text, media_id=media_id, into=found)
+
+    page.on("response", on_response)
+    try:
+        log.info("migrated.recover_navigate", project_id=project_id, media_id=media_id)
+        await page.goto(
+            _clip_url(project_id, media_id), wait_until="domcontentloaded", timeout=90_000
+        )
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + wait_s
+        while not found and loop.time() < deadline:
+            await page.wait_for_timeout(500)
+    finally:
+        page.remove_listener("response", on_response)
+
+    if not found:
+        raise WireFormatError(
+            detail=(
+                f"migrated host: no signed media URL for {media_id} within "
+                f"{wait_s:.0f}s of opening its clip route. The media id may belong to "
+                "another project, or the clip may have been moved to trash in Flow."
+            ),
+            route=_ROUTE,
+        )
+    return found
+
+
+def _collect(text: str, *, media_id: str, into: dict[str, Any]) -> None:
+    """Record the first frame that is a status record for *media_id* with a URL."""
+    for rpcid, payload in parse_frames(text):
+        try:
+            record = generation_record(rpcid, payload)
+        except WireFormatError:
+            # Most frames on a project load are not generation records. A frame that
+            # does not decode is not evidence about THIS media id.
+            continue
+        if record.media_id != media_id or not record.video_url:
+            continue
+        into.update(
+            url=record.video_url,
+            size=record.size_bytes,
+            workflow_id=record.workflow_id,
+            rpcid=rpcid,
+        )
+        return
+
+
+async def _fetch_verified(page: Page, *, url: str, expected: int | None, media_id: str) -> bytes:
+    """GET the signed URL and prove the bytes are this clip's original."""
+    from gflow_cli.api.transports.ui_automation import (  # noqa: PLC0415 - import cycle
+        _is_allowed_download_host,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    if not _is_allowed_download_host(url):
+        raise WireFormatError(
+            detail=(
+                "migrated host: refusing to download from "
+                f"{urlsplit(url).hostname!r} (not an allowed Google host)"
+            ),
+            route=_ROUTE,
+        )
+    # No redirects: an open redirect on the CDN must not rebound the request
+    # elsewhere — same posture as every other download in this codebase.
+    resp = await page.request.get(url, timeout=180_000, max_redirects=0)
+    if resp.status >= 300:
+        raise WireFormatError(
+            detail=f"migrated host: signed media URL returned HTTP {resp.status}",
+            status=resp.status,
+            route="flow-content.google",
+        )
+    body = await resp.body()
+    _verify(body, expected=expected, media_id=media_id)
+    return body
+
+
 async def recover_clip(
     page: Page,
     *,
@@ -84,95 +177,25 @@ async def recover_clip(
     :class:`WireFormatError` when the app never reports a signed URL for this media id,
     or when the bytes it serves are not the recorded asset.
     """
-    from gflow_cli.api.transports.ui_automation import (  # noqa: PLC0415 - import cycle
-        _is_allowed_download_host,  # pyright: ignore[reportPrivateUsage]
+    found = await _await_signed_record(
+        page, media_id=media_id, project_id=project_id, wait_s=wait_s
+    )
+    body = await _fetch_verified(
+        page, url=str(found["url"]), expected=found.get("size"), media_id=media_id
     )
 
-    found: dict[str, Any] = {}
-
-    async def on_response(response: Any) -> None:
-        if found or "batchexecute" not in str(getattr(response, "url", "")):
-            return
-        try:
-            text = await response.text()
-        except Exception:  # noqa: BLE001 - an aborted/streamed body is not our frame
-            return
-        for rpcid, payload in parse_frames(text):
-            try:
-                record = generation_record(rpcid, payload)
-            except WireFormatError:
-                # Most frames on a project load are not generation records. A frame that
-                # does not decode is not evidence about THIS media id.
-                continue
-            if record.media_id != media_id or not record.video_url:
-                continue
-            found.update(
-                url=record.video_url,
-                size=record.size_bytes,
-                workflow_id=record.workflow_id,
-                rpcid=rpcid,
-            )
-            return
-
-    page.on("response", on_response)
-    try:
-        url = _clip_url(project_id, media_id)
-        log.info("migrated.recover_navigate", project_id=project_id, media_id=media_id)
-        await page.goto(url, wait_until="domcontentloaded", timeout=90_000)
-
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + wait_s
-        while not found and loop.time() < deadline:
-            await page.wait_for_timeout(500)
-        if not found:
-            raise WireFormatError(
-                detail=(
-                    f"migrated host: no signed media URL for {media_id} within "
-                    f"{wait_s:.0f}s of opening its clip route. The media id may belong to "
-                    "another project, or the clip may have been moved to trash in Flow."
-                ),
-                route=_ROUTE,
-            )
-
-        signed = str(found["url"])
-        if not _is_allowed_download_host(signed):
-            raise WireFormatError(
-                detail=(
-                    "migrated host: refusing to download from "
-                    f"{urlsplit(signed).hostname!r} (not an allowed Google host)"
-                ),
-                route=_ROUTE,
-            )
-        # No redirects: an open redirect on the CDN must not rebound the request
-        # elsewhere — same posture as every other download in this codebase.
-        resp = await page.request.get(signed, timeout=180_000, max_redirects=0)
-        if resp.status >= 300:
-            raise WireFormatError(
-                detail=f"migrated host: signed media URL returned HTTP {resp.status}",
-                status=resp.status,
-                route="flow-content.google",
-            )
-        body = await resp.body()
-        _verify(body, expected=found.get("size"), media_id=media_id)
-
-        out_dir.mkdir(parents=True, exist_ok=True)
-        path = out_dir / f"{media_id}.mp4"
-        path.write_bytes(body)
-        log.info(
-            "migrated.recover_download",
-            media_id=media_id,
-            workflow_id=found["workflow_id"],
-            path=str(path),
-            bytes=len(body),
-        )
-        return RecoveredClip(
-            media_id=media_id,
-            workflow_id=str(found["workflow_id"]),
-            path=path,
-            bytes=len(body),
-        )
-    finally:
-        page.remove_listener("response", on_response)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{media_id}.mp4"
+    path.write_bytes(body)
+    workflow_id = str(found["workflow_id"])
+    log.info(
+        "migrated.recover_download",
+        media_id=media_id,
+        workflow_id=workflow_id,
+        path=str(path),
+        bytes=len(body),
+    )
+    return RecoveredClip(media_id=media_id, workflow_id=workflow_id, path=path, bytes=len(body))
 
 
 def _verify(body: bytes, *, expected: int | None, media_id: str) -> None:

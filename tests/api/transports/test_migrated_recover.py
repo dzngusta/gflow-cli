@@ -33,6 +33,9 @@ SIGNED = (
 
 MP4 = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 92  # 100 bytes, valid magic
 
+#: The XSSI guard every batchexecute body starts with.
+_XSSI = ")]}'\n\n"
+
 
 def _as29s_frame(*, media_id: str = MEDIA_ID, url: str = SIGNED, size: int = len(MP4)) -> str:
     """One `batchexecute` envelope shaped like the status reply the app receives.
@@ -47,7 +50,7 @@ def _as29s_frame(*, media_id: str = MEDIA_ID, url: str = SIGNED, size: int = len
     generation[8] = url
     record = [WORKFLOW_ID, PROJECT_ID, media_id, "CAE", None, details, None, [generation]]
     payload = json.dumps([["wrb.fr", "as29s", json.dumps(record)]])
-    return ")]}'\n\n" + str(len(payload)) + "\n" + payload
+    return _XSSI + str(len(payload)) + "\n" + payload
 
 
 class _Response:
@@ -67,6 +70,25 @@ class _Frame:
 
     async def text(self) -> str:
         return self._text
+
+
+class _Other:
+    """A non-`batchexecute` response — the listener must ignore it outright."""
+
+    def __init__(self, url: str) -> None:
+        self.url = url
+
+    async def text(self) -> str:  # pragma: no cover - must never be called
+        raise AssertionError("non-batchexecute traffic was read")
+
+
+class _Unreadable:
+    """A `batchexecute` response whose body cannot be read."""
+
+    url = "https://flow.google.com/_/FlowUi/data/batchexecute?rpcids=as29s"
+
+    async def text(self) -> str:
+        raise RuntimeError("body aborted")
 
 
 class _RequestApi:
@@ -213,6 +235,46 @@ class TestRecoverClip:
             await _recover(page, tmp_path)
 
         assert list(tmp_path.iterdir()) == []
+
+    @pytest.mark.asyncio
+    async def test_ignores_traffic_that_is_not_batchexecute(self, tmp_path: Path) -> None:
+        """A project load pulls fonts, images and telemetry; none of it is a record."""
+
+        class _Noise(FakePage):
+            async def goto(self, url: str, **_: Any) -> None:
+                self.gotos.append(url)
+                for handler in list(self._handlers):
+                    await handler(_Other("https://fonts.gstatic.com/s/x.woff2"))
+                for text in self.frames:
+                    for handler in list(self._handlers):
+                        await handler(_Frame(text))
+
+        clip = await _recover(_Noise(), tmp_path)
+        assert clip.media_id == MEDIA_ID
+
+    @pytest.mark.asyncio
+    async def test_survives_a_body_that_cannot_be_read(self, tmp_path: Path) -> None:
+        """An aborted or streamed body raises on `.text()` — that is not our frame."""
+
+        class _Aborted(FakePage):
+            async def goto(self, url: str, **_: Any) -> None:
+                self.gotos.append(url)
+                for handler in list(self._handlers):
+                    await handler(_Unreadable())
+                for text in self.frames:
+                    for handler in list(self._handlers):
+                        await handler(_Frame(text))
+
+        clip = await _recover(_Aborted(), tmp_path)
+        assert clip.media_id == MEDIA_ID
+
+    @pytest.mark.asyncio
+    async def test_skips_frames_that_are_not_generation_records(self, tmp_path: Path) -> None:
+        """Most frames on a project load decode to something else entirely."""
+        other = _XSSI + json.dumps([["wrb.fr", "Yizz8d", json.dumps({"unrelated": 1})]])
+        clip = await _recover(FakePage(frames=[other, _as29s_frame()]), tmp_path)
+
+        assert clip.media_id == MEDIA_ID
 
     @pytest.mark.asyncio
     async def test_removes_its_listener(self, tmp_path: Path) -> None:

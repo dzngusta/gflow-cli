@@ -356,6 +356,12 @@ unauthenticated, which is the local single-user default.
 > `gflow serve` — it currently runs the MCP/SSE server only. See the
 > [CHANGELOG](../CHANGELOG.md) for the roadmap.
 
+> **However you register it, that server then gates your upgrades.** Every client
+> above starts a long-lived `gflow mcp run` — one per session — and on Windows it
+> holds the install open, so a package manager can abort part-way through
+> `gflow update` and leave the environment broken. Stop the servers first:
+> [USAGE § `gflow update`](USAGE.md#gflow-update).
+
 ---
 
 ## 5. Security & Anti-Bot Mitigations

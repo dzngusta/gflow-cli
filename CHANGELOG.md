@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A clean Windows install could not run a single command.** `configure_logging`
+  renders TEXT logs with `structlog.dev.ConsoleRenderer(colors=True)`, and structlog's
+  Windows `_init_terminal` raises `SystemError` outright when `colorama` is missing —
+  but `colorama` was never declared, and nothing in the runtime closure supplies it
+  (structlog keeps it an optional extra; rich ships its own Windows console handling).
+  Because the call sits in the Click *group* callback it runs before any subcommand
+  body, so every interactive command on a fresh Windows install aborted with a
+  traceback that named structlog and never gflow — the failure read as a broken
+  install rather than an incomplete one, and it made the README's Windows quick-start
+  fail as written. Piping stderr happened to escape it, since `AUTO` then resolves to
+  the JSON renderer, which is why non-interactive use and CI never saw it.
+
+  The only `colorama` edge in `uv.lock` came from **pytest**, a dev dependency — so
+  every developer machine had it transitively and no gate could see the gap.
+  `colorama` is now a declared `sys_platform == "win32"` runtime dependency, and
+  `tests/test_observability.py` fails if it is dropped again. Reproduced and verified
+  on a clean Python 3.13 venv: the same `gflow doctor` invocation that raised
+  `SystemError` before now runs to completion, on both the CLI and the MCP stdio
+  server. ([#846](https://github.com/ffroliva/gflow-cli/issues/846))
 - **The address scan in the migrated-host session probe was quadratic.** It reads a
   1.28 MB `myaccount.google.com` response, and `[\w.+-]+@…` retries from every start
   position and rescans its run before failing to find an `@` — so an unbroken run of

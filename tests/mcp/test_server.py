@@ -567,6 +567,7 @@ class TestMcpServerEntryPoints:
 
         with (
             patch("gflow_cli.mcp.server.server") as mock_server,
+            patch("gflow_cli.mcp.server._apply_mcp_lease_wait_default"),
             patch("gflow_cli.mcp.server._configure_utf8_pipes"),
             patch("gflow_cli.mcp.server._redirect_stdout_to_stderr"),
             patch("gflow_cli.mcp.server.sys.stdout", MagicMock()),
@@ -600,6 +601,7 @@ class TestMcpServerEntryPoints:
 
         with (
             patch("gflow_cli.mcp.server.server") as mock_server,
+            patch("gflow_cli.mcp.server._apply_mcp_lease_wait_default"),
             patch("gflow_cli.mcp.server._configure_utf8_pipes"),
             patch("gflow_cli.mcp.server._serve", new_callable=AsyncMock) as mock_serve,
         ):
@@ -629,6 +631,7 @@ class TestMcpServerEntryPoints:
 
         with (
             patch("gflow_cli.mcp.server.server") as mock_server,
+            patch("gflow_cli.mcp.server._apply_mcp_lease_wait_default"),
             patch("gflow_cli.mcp.server._configure_utf8_pipes"),
             patch("gflow_cli.mcp.server._serve", new_callable=AsyncMock) as mock_serve,
         ):

@@ -1,6 +1,6 @@
 [project]
 name = "gflow-cli"
-version = "0.77.0"
+version = "0.77.1"
 description = "CLI and MCP server for Google Flow — drive Veo text-to-video, image-to-video and Imagen image generation from the terminal."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -77,6 +77,18 @@ dependencies = [
     "pydantic-settings>=2.5.0",
     "platformdirs>=4.0.0",
     "structlog>=24.0.0",
+    # Windows-only, and NOT optional there: observability.py renders TEXT logs
+    # with `structlog.dev.ConsoleRenderer(colors=True)`, whose Windows
+    # `_init_terminal` raises SystemError outright when colorama is missing.
+    # That runs in the Click group callback, so a clean Windows install aborted
+    # EVERY interactive command before any subcommand body (#846, 0.76.0) with
+    # a traceback that named structlog and never gflow. Nothing in the runtime
+    # closure supplies it — structlog keeps colorama an optional extra and rich
+    # ships its own Windows console handling — and the only colorama edge in
+    # uv.lock comes from pytest, a DEV dependency, which is why every developer
+    # machine hid this. Dropping this line re-breaks Windows out of the box;
+    # tests/test_observability.py guards it.
+    'colorama>=0.4.6; sys_platform == "win32"',
     "tenacity>=8.2",
     "browser-cookie3>=0.20.1",
     # MCP server + daemon layer (gflow serve / gflow mcp).

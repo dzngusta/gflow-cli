@@ -24,7 +24,7 @@ channel no longer accepts anything).
 | Channel | Audience | Submit via | Status | Last verified |
 |---|---|---|---|---|
 | [PyPI](https://pypi.org/project/gflow-cli/) | Python users, every downstream scraper | `uv publish` (release) | listed | 2026-09-14 |
-| [Official MCP Registry](https://registry.modelcontextprotocol.io) | Agent devs; feeds other registries | `mcp-publisher`, called by `release.yml` (#829; wiring repaired in #841) | **listed** · `0.76.0` active · automation repaired but **not yet exercised** — v0.77.0 is its first real run | 2026-09-16 |
+| [Official MCP Registry](https://registry.modelcontextprotocol.io) | Agent devs; feeds other registries | `mcp-publisher`, called by `release.yml` (#829; wiring repaired in #841) | **listed** · `0.77.0` active · automation **exercised and working** — v0.77.0 published itself unaided | 2026-09-17 |
 | [Glama](https://glama.ai/mcp/servers/ffroliva/gflow-cli) | Broad MCP audience (87k servers) | Web form | **listed** · claimed · rated **A** · release **0.75.0** published · Auto-Release on | 2026-09-15 |
 | [MCP Market](https://mcpmarket.com/server/gflow-cli) | Consumer discovery | — (crawled us) | **listed** | 2026-09-14 |
 | [skills.sh](https://skills.sh/ffroliva/gflow-cli) | Cross-agent skill users | — (telemetry) | **listed** | 2026-09-14 |
@@ -55,12 +55,16 @@ channel no longer accepts anything).
 Ranked by reach per hour of work. The eight submissions are out; what is left is gated on one
 thing, and it is not a distribution task.
 
-> ⚠️ **Repaired in #841, and v0.77.0 is the first release that will actually test it.**
-> For every release through v0.76.0 the registry publish never fired. It hung off
+> ✅ **Repaired in #841, and v0.77.0 proved it.** The registry now serves
+> `io.github.ffroliva/gflow-cli` at **0.77.0, status `active`, published
+> 2026-09-16T18:53:54Z** — from the release run itself, with no hand-publish.
+>
+> For every release through v0.76.0 the publish never fired. It hung off
 > `release: published`, but `release.yml` creates the Release with the default
 > `GITHUB_TOKEN`, and GitHub starts no workflow runs from `GITHUB_TOKEN`-created events.
 > Measured on v0.76.0 — a real Release published, and the workflow had **zero runs, ever**
-> ([#841](https://github.com/ffroliva/gflow-cli/issues/841)). v0.76.0 was published by hand.
+> ([#841](https://github.com/ffroliva/gflow-cli/issues/841)). v0.76.0 was published by hand;
+> v0.77.0 was not. Verified against the live registry API on 2026-09-17.
 >
 > **It is now called, not triggered.** `release.yml` invokes `mcp-registry.yml` directly
 > (`uses:` + `needs: build-and-publish`). No event, so nothing for the token rule to block —

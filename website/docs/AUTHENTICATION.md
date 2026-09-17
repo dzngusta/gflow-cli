@@ -216,6 +216,24 @@ watches for the completed Flow sign-in and closes the window itself, then prints
 verified account. If you close the window yourself it still works: gflow verifies the
 profile exactly the same way and does not treat a manual close as an error.
 
+**What "watches for the sign-in" means, and why it has two signals.** The primary one is the
+Flow session endpoint on `labs.google` — the cookie jar is never the authentication
+decision, because a cookie can be present while the endpoint still rejects. But for an
+account Google serves from `flow.google.com`, labs hands off without ever minting a session,
+so that endpoint is an oracle that cannot answer: through v0.77.0 those logins held the
+window open for the full timeout while this page promised the opposite
+([#849](https://github.com/ffroliva/gflow-cli/issues/849)). gflow now also stops waiting when
+the jar carries both halves of a migrated session — the `.google.com` SSO cookie *and* the
+`flow.google.com` app-session cookie. That second signal ends a wait; it does not decide
+anything. Verification still runs afterwards, against a server, on what actually landed on
+disk, and it is still the only thing that can call a login successful.
+
+**A timeout is not a verdict either.** If neither signal fires, gflow closes the window and
+*still* reads the profile before failing — "gflow verifies what's on disk either way" is the
+promise the sign-in banner makes, and it now holds on every path. A sign-in that completed
+while the detector was blind is reported as the success it is; one that really did not
+happen keeps the timeout's own wording, which is the message that explains the wait.
+
 **Automatic fallback, with nothing to choose.** If Playwright can't resolve a Chrome channel
 on this machine (a Chromium-only Linux box, for instance), or Google rejects the browser
 anyway, `gflow auth login` falls back to the earlier **Passive Capture** flow: Chrome

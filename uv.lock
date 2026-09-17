@@ -801,11 +801,12 @@ wheels = [
 
 [[package]]
 name = "gflow-cli"
-version = "0.77.0"
+version = "0.77.1"
 source = { editable = "." }
 dependencies = [
     { name = "browser-cookie3" },
     { name = "click" },
+    { name = "colorama", marker = "sys_platform == 'win32'" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "mcp" },
@@ -883,6 +884,7 @@ requires-dist = [
     { name = "av", marker = "extra == 'dev'", specifier = ">=12" },
     { name = "browser-cookie3", specifier = ">=0.20.1" },
     { name = "click", specifier = ">=8.1.0" },
+    { name = "colorama", marker = "sys_platform == 'win32'", specifier = ">=0.4.6" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "gcsfs", marker = "extra == 'gcs'", specifier = ">=2024.2.0" },
     { name = "httpx", specifier = ">=0.27.0" },

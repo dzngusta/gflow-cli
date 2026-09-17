@@ -1488,11 +1488,26 @@ be reached; after an upgrade `latest` is the version the venv actually reports;
   installed (`git pull`, reinstall from the checkout); `uv` / `pipx` detected
   but not on `PATH`, or a plain venv with no `pip` module (a `uv venv`): the
   message carries the exact command to run yourself;
-- **after the manager ran** — the venv still reports the old version (a receipt
+- **after the manager ran** — first, the venv can no longer import gflow-cli at
+  all (see below); then, the venv still reports the old version (a receipt
   pinned to one version makes `uv tool upgrade` a silent no-op, for instance),
   or the version could not be re-read at all. The manager's own output is above
   the error. One carve-out: when PyPI was unreachable *and* the manager exited 0
   *and* nothing changed, the manager simply found nothing newer — exit 0.
+
+**A half-replaced environment is detected, not reported as a version.** Managers
+replace files in place, so an interrupted run can leave a venv whose *metadata*
+reads perfectly and whose *imports* are dead — measured on Windows in
+[#848](https://github.com/ffroliva/gflow-cli/issues/848), where an aborted native
+dependency swap left every command dying on `AttributeError: module 'greenlet'
+has no attribute 'greenlet'` while the version still read `0.69.0`. After the
+manager runs, `gflow update` therefore imports gflow-cli in a fresh isolated
+interpreter before it looks at any version. If that import fails the command
+exits 11 saying the install is unusable and quoting the interpreter's own last
+line, and the remediation is a **forced reinstall**
+(`uv tool install "gflow-cli==<version>" --force --reinstall`, or the pipx / pip
+equivalent) — a plain `upgrade` cannot repair that state, because it reads the
+metadata, finds it current and changes nothing.
 
 The venv is the truth, not the manager's exit code: after the manager runs,
 `gflow update` re-reads the installed gflow-cli version from a fresh interpreter

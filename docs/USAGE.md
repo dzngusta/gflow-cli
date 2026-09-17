@@ -1455,6 +1455,7 @@ that privacy setting, so missing names are expected, not a defect.
 ## `gflow update`
 
 Upgrade gflow-cli in place, through the package manager that installed it.
+**Stop every other `gflow` process first** — see below.
 
 ```text
 gflow update [--check] [--json]
@@ -1519,9 +1520,30 @@ points at the venv's python — so `gflow update` reports it as upgraded with a
 note quoting the manager's exit code; the next update from another shell
 refreshes the launcher.
 
-Restart any running `gflow serve` / MCP server afterwards; a long-lived process
-keeps the old code until it restarts. There is deliberately no MCP twin of this
-command: a server must not replace its own code underneath itself.
+**Stop every other `gflow` process BEFORE you upgrade — not after.** The launcher
+lock just above is the benign case: it is the `gflow.exe` *you* are running, and
+the upgrade lands anyway. A **different** gflow, holding the install's contents
+open, is not — there the manager can abort part-way and leave the environment
+broken. The holder reported so far is **`gflow mcp run`**: an editor with gflow
+registered as an MCP server starts one per session, and they outlive the command
+that started them. Reported with a reproduction in
+[#848](https://github.com/ffroliva/gflow-cli/issues/848#issuecomment-5704903340):
+`uv tool install --force` failed with *"Access is denied"* on
+`…\uv\tools\gflow-cli\Scripts` and left the install answering
+`No module named 'gflow_cli'` until those processes were stopped and the install
+re-run.
+
+Close the editor sessions (or stop the servers) first. On Windows,
+`tasklist | findstr gflow` lists image names only — a server registered as
+`uv run gflow …` shows up as `uv.exe`, not `gflow.exe`; elsewhere
+`pgrep -fa gflow` prints the command line it matched, so you can see what you
+are about to stop. `gflow update` cannot run this check for you: it is itself
+one of those processes. If an upgrade does abort anyway, the exit-11 **forced
+reinstall** above is the repair — run it from a shell with no gflow running.
+
+Restart any running `gflow serve` / MCP server afterwards too; a long-lived
+process keeps the old code until it restarts. There is deliberately no MCP twin
+of this command: a server must not replace its own code underneath itself.
 
 Every command also prints an **update banner** on stderr (a one-line notice when
 stderr is not a terminal) when a newer release is known — see

@@ -72,6 +72,45 @@ emit a single parseable object on stdout instead of Rich tables. See
 
 Note: `--profile NAME` is **per-subcommand**, not global — pass it after the subcommand name (e.g. `gflow image t2i "..." --profile experiments`, not `gflow --profile experiments image t2i ...`).
 
+## `gflow docs`
+
+The documentation, from the terminal. Read-only, offline, no account, no credits — the
+pages ship inside the package, so this works on a machine that has never seen this
+repository.
+
+```bash
+gflow docs                          # every topic, with what it covers
+gflow docs usage                    # print one page (raw Markdown — pipe it)
+gflow docs --search "r2v duration"  # find the line that answers a question
+```
+
+| Flag | Effect |
+|---|---|
+| `--search TERM` | Every line mentioning TERM, with `docs/FILE.md:LINE` next to it. Whitespace splits the query into terms that must **all** appear on the line |
+| `--json` | Machine-readable, on all three forms |
+
+**A topic name is whatever you would type**: the slug (`user-guide`), the file name
+(`USER_GUIDE.md`), either case, or any unambiguous prefix (`conf` → `configuration`). An
+ambiguous prefix lists the candidates; an unknown name suggests the nearest ones.
+
+**Use two words when one is common.** `--search duration` matches 133 lines and says so;
+`--search "r2v duration"` returns five, the first being the host-specific rule. Search
+reports how many hits it held back rather than quietly truncating.
+
+Curated answers rank first: the `**"How do I …?"** →` rows in
+[INDEX](INDEX.md#topic-shortcuts) were each written to *be* an answer, so they come above
+raw body-text matches for the same term.
+
+Piping works — the page is emitted as its own Markdown, not as rendered boxes:
+
+```bash
+gflow docs configuration | grep GFLOW_CLI_STORAGE_URI
+gflow docs --search "exit code" --json | jq -r '.matches[].path'
+```
+
+There is deliberately **no MCP twin** — see the note at the top of
+`src/gflow_cli/cli_docs.py`.
+
 ## `gflow auth`
 
 See [AUTHENTICATION § Commands](AUTHENTICATION.md#commands).

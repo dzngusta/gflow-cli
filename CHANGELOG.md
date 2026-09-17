@@ -13,6 +13,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   render a fifth aspect radio (`3:4`) that the 2026-09-08 enumeration did not see, so gflow
   refused it with exit 36. All five image aspects are now driven on both hosts.
   ([#864](https://github.com/ffroliva/gflow-cli/issues/864))
+
+- **`gflow docs` — the documentation, reachable from the terminal.** 126 pages in `docs/`
+  and nothing in the CLI pointed at any of them, so at the moment of use the knowledge was
+  unreachable and the reader guessed. `gflow docs` lists the topics, `gflow docs <topic>`
+  prints one as raw Markdown (it pipes), and `gflow docs --search <term>` returns the
+  matching lines with `docs/FILE.md:LINE` beside each one. Read-only and offline — no
+  network, no account, no credits.
+
+  **The pages now ship inside the wheel** (`gflow_cli/_docs`, +1.3 MB), because the user
+  this was filed for installed from PyPI and has no checkout; a command that could only
+  print GitHub links would not solve it. A build hook globs `docs/*.md`, so the topic list
+  cannot drift and `assets/`/`superpowers/` stay out — measured, after
+  `force-include` + `exclude` silently shipped 148 files it was told to exclude.
+
+  Search returns a **line, windowed**, not a file name: the rule that prompted this issue
+  lives inside a 4 000-character bullet in `MCP.md`, and answering "it is in MCP.md" leaves
+  the reader where they started. Curated `INDEX.md` § Topic shortcuts rank above raw body
+  text, all query terms must appear on the line, and a vague query reports how many hits it
+  held back instead of quietly truncating. A topic resolves from its slug, its file name,
+  either case or an unambiguous prefix — and never by building a path from what was typed,
+  so `gflow docs ../../etc/passwd` is an ordinary unknown-topic refusal.
+
+  No MCP twin, deliberately (`gflow update` is the precedent); the reasoning is recorded in
+  `cli_docs.py` rather than left implicit.
+  ([#861](https://github.com/ffroliva/gflow-cli/issues/861))
+
 - **`gflow video i2v --end-frame <local file>` now runs on `flow.google.com`.** Start+end
   frame interpolation was the last i2v form the migrated composer refused: it exited 36
   ("an end frame is not ported yet") on every account Flow has moved. Both frames are now

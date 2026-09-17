@@ -47,6 +47,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   icon node for real — a mocked picker passes against the bug.
   ([#860](https://github.com/ffroliva/gflow-cli/issues/860))
 
+- **Flow's promo modal blocked the first click on a freshly loaded editor.** On
+  `flow.google.com` a `role="dialog"` panel over a new editor made `image t2i` fail as
+  exit 23 — *".settings-trigger-button did not accept a click within 5000 ms — it is
+  covered by div.cdk-overlay-backdrop"* — telling the user to file a selector-drift bug
+  when one click on the page fixes it permanently.
+
+  `_dismiss_dialog` already existed and its selector already matched. It was called at
+  the one moment it could not see anything: one frame after `domcontentloaded`, before
+  Angular has rendered the modal. That is why a blocked run logged **neither**
+  `migrated.dialog_dismissed` nor `migrated.dialog_not_dismissed` — the silence in the
+  incident's event stream was the evidence, not the absence of it. The dismissal now
+  also runs in `_open_pane`, where the image and video paths take their first click, the
+  same place the `glue` consent bar is already cleared. It stays best-effort: a modal
+  that refuses to go still falls through to the click post-mortem, which names the
+  backdrop, rather than becoming a second competing error path.
+  ([#859](https://github.com/ffroliva/gflow-cli/issues/859))
+
 - **The migrated `--end-frame` lane rejected omni's interpolation key.** The start+end
   submit validator pinned the model key to `veo_3_1_interpolation_lite`, so
   `omni_flash_i2v_*_first_last` submits — what the second measured cohort actually sends —

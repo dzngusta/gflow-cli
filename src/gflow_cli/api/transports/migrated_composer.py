@@ -36,17 +36,21 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 from urllib.parse import unquote_plus, urlsplit
 from uuid import uuid4
 
 import structlog
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
-from gflow_cli.api.dto import GeneratedImage
+from gflow_cli.api.dto import GeneratedImage, ProjectInfo
 from gflow_cli.api.image import Aspect as ImageAspect
 from gflow_cli.api.image import Model as ImageModel
-from gflow_cli.api.transports._common import extract_project_id, raise_if_known_landing
+from gflow_cli.api.transports._common import (
+    extract_project_id,
+    raise_if_known_landing,
+    safe_page_url,
+)
 from gflow_cli.api.transports.batchexecute import (
     GenerationRecord,
     generation_record,
@@ -76,6 +80,8 @@ from gflow_cli.errors import (
 from gflow_cli.redaction import redact_sensitive_text
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from playwright.async_api import Page
 
     from gflow_cli.api.image import GenerateImageRequest
@@ -164,7 +170,13 @@ COOKIE_BAR_REJECT = "button.glue-cookie-notification-bar__reject"
 #: t2v submits on ``YhhmEf``, i2v on ``eb1hJf``, and an Ingredients (r2v) run on
 #: ``MZZa6b`` — measured 2026-09-05. Watching only the first is why r2v looked
 #: for several rounds like it never submitted at all.
-SUBMIT_RPCS = ("YhhmEf", "eb1hJf", "MZZa6b")
+SUBMIT_RPCS = ("YhhmEf", "eb1hJf", "MZZa6b", "nprQif")
+#: The start+end (interpolation) submit. Same composer, different contract: the model
+#: key is ``veo_3_1_interpolation_lite``, the body carries BOTH frame ids, and the rpc
+#: name travels in the ``f.req`` body — the URL carries no ``rpcids`` query param
+#: (captured 2026-09-16, issue #639). The reply embeds the standard ``CAE`` record,
+#: so status/terminal/download are shared with the other submit rpcs.
+INTERPOLATION_SUBMIT_RPC = "nprQif"
 IMAGE_SUBMIT_RPC = "ogiZ0b"
 STATUS_RPCS = ("jwpduf", "as29s")
 UPLOAD_RPC = "maseQ"
@@ -363,10 +375,7 @@ ASPECT_LIGATURE: dict[Aspect, str] = {
     Aspect.LANDSCAPE: "crop_16_9",
     Aspect.PORTRAIT: "crop_9_16",
 }
-#: Ligature per aspect. Only the four in :data:`IMAGE_ASPECT_LIGATURE_MEASURED`
-#: were observed on the migrated host; ``crop_portrait`` is this driver's guess at
-#: what a 3:4 radio WOULD be called, kept so that adding it later is a one-line
-#: change, and deliberately not reachable until something measures it.
+#: Ligature per aspect radio in the migrated composer's image settings.
 IMAGE_ASPECT_LIGATURE: dict[ImageAspect, str] = {
     ImageAspect.LANDSCAPE: "crop_16_9",
     ImageAspect.PORTRAIT: "crop_9_16",
@@ -375,17 +384,11 @@ IMAGE_ASPECT_LIGATURE: dict[ImageAspect, str] = {
     ImageAspect.PORTRAIT_THREE_FOUR: "crop_portrait",
 }
 
-#: The aspects actually enumerated in the migrated composer's radiogroup —
-#: ``[crop_16_9*, crop_landscape, crop_square, crop_9_16]``, one account,
-#: 2026-09-08 (docs/superpowers/spikes/2026-09-08-migrated-image-submit-wire.md).
-IMAGE_ASPECT_LIGATURE_MEASURED: frozenset[ImageAspect] = frozenset(
-    {
-        ImageAspect.LANDSCAPE,
-        ImageAspect.PORTRAIT,
-        ImageAspect.SQUARE,
-        ImageAspect.LANDSCAPE_FOUR_THREE,
-    },
-)
+#: The aspects actually enumerated in that radiogroup. Four on 2026-09-08
+#: (docs/superpowers/spikes/2026-09-08-migrated-image-submit-wire.md); five on
+#: 2026-09-17, when ``crop_portrait`` (3:4) appeared between ``crop_square`` and
+#: ``crop_9_16`` (scripts/dev/spike_migrated_aspect_radios.py, #864).
+IMAGE_ASPECT_LIGATURE_MEASURED: frozenset[ImageAspect] = frozenset(IMAGE_ASPECT_LIGATURE)
 IMAGE_MODEL_MENU_MATCHERS: dict[ImageModel, ModelMenuMatcher] = {
     # Exact enough to exclude the separate "Nano Banana 2 Lite" entry without
     # depending on the decorative banana glyph that precedes both live labels.
@@ -396,10 +399,12 @@ IMAGE_MODEL_MENU_MATCHERS: dict[ImageModel, ModelMenuMatcher] = {
 
 def _unported_form(request: GenerateVideoRequest) -> str | None:
     """The noun for what this request asks of the new host that slice 1 does not
-    drive, or ``None`` when the composer takes it. i2v is ported for a **local**
-    start frame only: the Frames picker on this host lists assets by display name
-    with no UUID in its DOM (2026-09-05 spike), so a frame given by media UUID or
-    ``@Name`` has nothing to anchor on yet, and the End chip is unmeasured."""
+    drive, or ``None`` when the composer takes it. i2v is ported for **local**
+    start AND end frames: the Frames picker on this host lists assets by display
+    name with no UUID in its DOM (2026-09-05 spike), so a frame given by media UUID
+    or ``@Name`` has nothing to anchor on yet. The End chip itself was measured on
+    2026-09-15 (scripts/dev/spike_migrated_end_frame.py): two empty chips, Start
+    and End by text, and clicking the End chip opens the library picker."""
     # Character entities are a different attach surface (a chip with an entity_id, in a
     # different wire slot) and unported. This check is MODE-INDEPENDENT and must stay
     # ahead of every early return (#716): it used to live inside the R2V branch, so a
@@ -462,8 +467,10 @@ def _unported_form(request: GenerateVideoRequest) -> str | None:
         return None
     if request.mode is not Mode.I2V:  # pragma: no cover - a fourth Mode would land here
         return f"the {request.mode.value} mode"
-    if request.end_image or request.end_image_ref_id or request.end_image_ref_name:
-        return "an end frame"
+    if request.end_image_ref_id:
+        return "an end frame given by Flow media UUID"
+    if request.end_image_ref_name:
+        return "an end frame given by @Name"
     if request.start_image_ref_id:
         return "a frame given by Flow media UUID"
     if request.start_image_ref_name:
@@ -475,11 +482,13 @@ def _unported_form(request: GenerateVideoRequest) -> str | None:
 
 def migrated_can_serve(request: GenerateVideoRequest, project_id: str | None) -> bool:
     """Can the migrated composer take this request as it stands? Text-to-video, or
-    image-to-video / reference-to-video from **local** files, in an existing project,
-    with a model the new host offers (or none). Everything else — an end frame, a
-    frame or reference by UUID or ``@Name``, character references, a fresh project,
-    a model this host has not been observed to offer — is not ported yet, so an
-    account still served labs.google keeps the labs driver for it.
+    image-to-video / reference-to-video from **local** files (start and end frames
+    alike), in an existing project, with a model the new host offers (or none).
+    Everything else — a frame or reference by UUID or ``@Name``, character
+    references, a model this host has not been observed to offer — is not ported
+    yet, so an account still served labs.google keeps the labs driver for it. A
+    request with no project is not decided here: ``FlowApiClient.generate_video``
+    creates one before any route is chosen (#864).
 
     Note what that last clause does NOT claim. A 2026-09-14 survey found
     ``labs.google/fx/tools/flow`` returning **HTTP 308** on the three profiles here
@@ -512,12 +521,9 @@ def _unported_image_form(request: GenerateImageRequest) -> str | None:
     if request.model not in IMAGE_MODEL_MENU_MATCHERS:
         return f"the {request.model.value} model"
     if request.aspect not in IMAGE_ASPECT_LIGATURE_MEASURED:
-        # The aspect radiogroup was enumerated once on this host and carried four
-        # radios — crop_16_9, crop_landscape, crop_square, crop_9_16 — with no
-        # crop_portrait. Refusing here is the difference between exit 36 ("gflow
-        # has not ported this") and exit 23 ("file a frontend-drift bug"), and the
-        # second is a lie: nothing is drifting. If a later enumeration finds the
-        # radio, move the aspect into the measured map rather than deleting this.
+        # Every aspect gflow knows is measured today (#864). Kept so a new aspect
+        # added to the enum is refused as unported (exit 36), never left to miss its
+        # radio and report frontend drift (exit 23) about a frontend behaving fine.
         return f"the {request.aspect.value} aspect ratio"
     return None
 
@@ -582,6 +588,17 @@ def _rpcid(url: str) -> str | None:
     return m.group(1) if m else None
 
 
+def _body_rpcid(body: str) -> str | None:
+    """The rpc name inside a ``batchexecute`` POST body, or ``None``.
+
+    The interpolation submit (``nprQif``) carries no ``rpcids`` query param — the
+    name lives at the head of ``f.req``. ``_post_data`` form-decodes first, so the
+    match runs on plain text either way.
+    """
+    m = re.search(r'f\.req=\[\[\["([A-Za-z0-9]+)"', body or "")
+    return m.group(1) if m else None
+
+
 def _first_uuid(text: str) -> str | None:
     """The first UUID in a ``batchexecute`` reply — for ``maseQ`` that is the new
     media id (``[media_id, project_id, …]``, measured 2026-09-05)."""
@@ -611,10 +628,13 @@ def _post_data(request: Any) -> str:
     return unquote_plus(body) if body else ""
 
 
-def _i2v_body_problem(body: str, rpcid: str, media_id: str) -> str | None:
+def _i2v_body_problem(
+    body: str, rpcid: str, media_id: str, end_media_id: str | None = None
+) -> str | None:
     """Why this submit body is NOT the image-to-video generation the user asked for,
     or ``None``. A t2v key means the chip was empty at submit time; a body without
-    the uploaded id means the picker bound some other asset."""
+    the uploaded id means the picker bound some other asset. When ``end_media_id``
+    is given the body must also carry the bound end frame."""
     if not body:
         return (
             f"migrated host: the {rpcid} submit body could not be read, so the "
@@ -635,6 +655,62 @@ def _i2v_body_problem(body: str, rpcid: str, media_id: str) -> str | None:
             f"frame {media_id} (ids in the body: {', '.join(other[:4]) or 'none'}) — the "
             "picker bound a different asset"
         )
+    if end_media_id is not None and end_media_id not in body:
+        other = [u for u in UUID_RE.findall(body) if u.lower() != end_media_id.lower()]
+        return (
+            f"migrated host: the {rpcid} submit body does not carry the uploaded end "
+            f"frame {end_media_id} (ids in the body: {', '.join(other[:4]) or 'none'}) — the "
+            "picker bound a different asset"
+        )
+    return None
+
+
+def _interpolation_body_problem(
+    body: str, rpcid: str, start_media_id: str | None, end_media_id: str | None
+) -> str | None:
+    """Why this submit body is NOT the start+end interpolation run, or ``None``.
+
+    Interpolation is keyed off the bound END frame: without one the app must never
+    send this rpc, so seeing it on a start-only run is a wire-format error rather
+    than a run to adopt. With both frames bound the body must carry the
+    interpolation model key and both uploaded ids (captured 2026-09-16, #639).
+    """
+    if start_media_id is None or end_media_id is None:
+        return (
+            f"migrated host: the app submitted on {rpcid} (start+end interpolation) "
+            "for a run with no bound end frame — refusing to bill an interpolation "
+            "the request never asked for"
+        )
+    if not body:
+        return (
+            f"migrated host: the {rpcid} submit body could not be read, so the "
+            "start+end interpolation request could not be confirmed before Flow "
+            "acted on it"
+        )
+    key = MODEL_KEY.search(body)
+    key_text = key.group(0) if key else "no model key"
+    # Interpolation keys differ per model: veo uses ``*_interpolation_*`` and omni
+    # uses ``*_i2v_*s_first_last``. Both are MEASURED, not inferred —
+    # ``veo_3_1_interpolation_lite`` on the contributor's account (#831) and
+    # ``omni_flash_i2v_8s_first_last`` here on 2026-09-17 (see
+    # docs/superpowers/spikes/2026-09-17-migrated-end-frame-submit-contract.md).
+    # Matching on key SHAPE rather than a pinned literal is deliberate: the two
+    # cohorts disagree on the key, so a literal would refuse a valid run on one of
+    # them. A plain i2v/t2v key means a frame dropped before the app submitted.
+    if "interpolation" not in key_text and "first_last" not in key_text:
+        return (
+            f"migrated host: the submit went out on {rpcid} with {key_text} for a "
+            "start+end (interpolation) request — expected an interpolation "
+            "model key (one of the frames was not bound when the app submitted)"
+        )
+    for label, media_id in (("start", start_media_id), ("end", end_media_id)):
+        if media_id not in body:
+            other = [u for u in UUID_RE.findall(body) if u.lower() != media_id.lower()]
+            return (
+                f"migrated host: the {rpcid} submit body does not carry the uploaded "
+                f"{label} frame {media_id} (ids in the body: "
+                f"{', '.join(other[:4]) or 'none'}) — the picker bound a different asset"
+            )
     return None
 
 
@@ -1173,6 +1249,13 @@ class MigratedComposer:
 
     async def _open_pane(self, page: Page) -> Any:
         await self._dismiss_cookie_bar(page)
+        # And again here, not only in `ensure_editor` (#859). That probe runs one frame
+        # after `domcontentloaded`, before Angular has rendered anything, so the promo
+        # modal it is looking for does not exist yet and `is_visible()` returns False --
+        # which is why a run blocked by one logs NEITHER `migrated.dialog_dismissed` nor
+        # `migrated.dialog_not_dismissed`. By the time the first real click is made the
+        # dialog IS up, and its CDK backdrop is what the post-mortem named.
+        await self._dismiss_dialog(page)
         trigger = page.locator(READY_ANCHOR).first
         try:
             # Visibility, not `count()`. Agent mode leaves the trigger in the DOM under a
@@ -1474,6 +1557,22 @@ class MigratedComposer:
         # replace the stage-named failure with a generic "attach timed out".
         media_id, display_name = await self._upload_via_toolbar(page, project_id, image_path)
         await self._pick_frame_by_name(page, display_name, media_id)
+        return media_id
+
+    async def attach_end_frame(self, page: Page, project_id: str, image_path: Path) -> str:
+        """Upload ``image_path`` through the editor's own Upload entry, bind it on the
+        End chip by file name, and return the media id — mirroring
+        :meth:`attach_start_frame`. The Start chip must already be bound: the pick
+        clicks the first REMAINING empty chip and then requires two bound chips, so
+        a silently unbound Start surfaces here instead of mis-binding End.
+        """
+        from gflow_cli.api.client import validate_image_file  # noqa: PLC0415 - cycle
+
+        await validate_image_file(image_path)
+        media_id, display_name = await self._upload_via_toolbar(page, project_id, image_path)
+        await self._pick_frame_by_name(
+            page, display_name, media_id, chip_label="End", expect_bound_chips=2
+        )
         return media_id
 
     async def _upload_via_toolbar(
@@ -1836,13 +1935,14 @@ class MigratedComposer:
         )
 
     @staticmethod
-    async def _open_frame_picker(page: Page) -> Any:
-        """Click the empty Start chip and wait for the library picker's search box."""
+    async def _open_frame_picker(page: Page, chip_label: str = "Start") -> Any:
+        """Click the first remaining empty chip (Start, then End once Start is bound)
+        and wait for the library picker's search box."""
         chip = page.locator(EMPTY_CHIP).first
         if not await chip.count():
             raise UiSelectorDriftError(
                 detail=(
-                    f"migrated host: no empty Start chip ({EMPTY_CHIP}) to bind the frame "
+                    f"migrated host: no empty {chip_label} chip ({EMPTY_CHIP}) to bind the frame "
                     "on — is the Frames submode selected? (host=migrated)"
                 ),
             )
@@ -1856,21 +1956,36 @@ class MigratedComposer:
             raise UiSelectorDriftError(
                 detail=(
                     f"migrated host: the frame picker ({PICKER}) did not open within "
-                    f"{FRAME_PICKER_OPEN_S:.0f}s of clicking the Start chip (host=migrated)"
+                    f"{FRAME_PICKER_OPEN_S:.0f}s of clicking the {chip_label} chip (host=migrated)"
                 ),
             ) from e
         return picker
 
-    async def _pick_frame_by_name(self, page: Page, name: str, media_id: str) -> None:
-        """Start chip → the library picker → search by display name → first option →
-        the chip must now hold a thumbnail. An unbound chip is refused here: an empty
-        Frames submit goes out as text-to-video (the labs #125 shape on this host)."""
+    async def _pick_frame_by_name(
+        self,
+        page: Page,
+        name: str,
+        media_id: str,
+        *,
+        chip_label: str = "Start",
+        expect_bound_chips: int = 1,
+    ) -> None:
+        """Empty chip → the library picker → search by display name → first option →
+        then ``expect_bound_chips`` bound thumbnails must be visible (1 after Start,
+        2 after End). An unbound chip is refused here: an empty Frames submit goes
+        out as text-to-video (the labs #125 shape on this host)."""
         for attempt in range(1, FRAME_SEARCH_ATTEMPTS + 1):
-            picker = await self._open_frame_picker(page)
+            picker = await self._open_frame_picker(page, chip_label)
             search = picker.locator(PICKER_SEARCH).first
             await search.click(timeout=4000)
             await page.keyboard.insert_text(name)
-            options = picker.locator(PICKER_OPTION).filter(has_text=_exact(name))
+            # Containment, never `_exact` (#860): a picker tile is an icon node followed
+            # by the file name, and a locator's text is the concatenation of both --
+            # `imageshero-ab12cd34.png` for an asset named `hero-ab12cd34.png`. An anchored
+            # match can therefore never hold on this cohort. The display name is
+            # run-unique by construction (#792), so a substring is exact enough to be
+            # unable to bind a stale copy of the same file.
+            options = picker.locator(PICKER_OPTION).filter(has_text=name)
             try:
                 await options.first.wait_for(
                     state="visible", timeout=int(FRAME_PICKER_OPEN_S * 1000)
@@ -1947,15 +2062,18 @@ class MigratedComposer:
                     ),
                 ) from e
         try:
-            await page.locator(BOUND_CHIP).first.wait_for(
-                state="visible", timeout=int(FRAME_THUMB_VISIBLE_S * 1000)
+            await (
+                page.locator(BOUND_CHIP)
+                .nth(expect_bound_chips - 1)
+                .wait_for(state="visible", timeout=int(FRAME_THUMB_VISIBLE_S * 1000))
             )
         except Exception as e:
             raise UiSelectorDriftError(
                 detail=(
-                    f"migrated host: the Start chip did not bind {name!r} — no "
-                    f"{BOUND_CHIP} within {FRAME_THUMB_VISIBLE_S:.0f}s of the pick; "
-                    "refusing to submit what would go out as text-to-video (host=migrated)"
+                    f"migrated host: the {chip_label} chip did not bind {name!r} — "
+                    f"fewer than {expect_bound_chips} bound chip(s) within "
+                    f"{FRAME_THUMB_VISIBLE_S:.0f}s of the pick; refusing to submit what "
+                    "would go out as text-to-video (host=migrated)"
                 ),
             ) from e
         log.info("migrated.frame_bound", media_id=media_id)
@@ -1988,35 +2106,75 @@ class MigratedComposer:
         on_started: VideoStartedCallback | None,
         project_id: str | None,
         expect_media_id: str | None = None,
+        expect_end_media_id: str | None = None,
         expect_reference_ids: tuple[str, ...] = (),
     ) -> GenerationRecord:
-        """Click submit, then read the page's own ``YhhmEf``/``eb1hJf`` / ``jwpduf`` /
-        ``as29s`` replies until the record is terminal. Fires ``on_started`` as soon
-        as the submit reply names the media id — before the poll, as the labs path does.
+        """Click submit, then read the page's own submit / ``jwpduf`` / ``as29s``
+        replies until the record is terminal. Fires ``on_started`` as soon as the
+        submit reply names the media id — before the poll, as the labs path does.
 
-        ``expect_media_id`` (i2v) and ``expect_reference_ids`` (r2v) inspect the submit
-        *request* the app sends: its body must carry those ids and the matching ``_i2v_``
-        / ``_r2v_`` model key, else the run is a :class:`WireFormatError` — the generation
-        the user asked for is not the one Flow is billing."""
+        ``expect_media_id`` (i2v) and ``expect_reference_ids`` (r2v) inspect the
+        submit *request* the app sends: its body must carry those ids and the
+        matching model key, else the run is a :class:`WireFormatError` — the
+        generation the user asked for is not the one Flow is billing. A bound end
+        frame (``expect_end_media_id``) switches the submit to the interpolation
+        rpc (``nprQif``), whose name travels in the ``f.req`` body rather than the
+        URL; that body must carry the interpolation key and both frame ids."""
         loop = asyncio.get_running_loop()
         submitted: asyncio.Future[GenerationRecord] = loop.create_future()
         route_error: asyncio.Future[WireFormatError] = loop.create_future()
 
         def on_request(request: Any) -> None:
             url = str(getattr(request, "url", ""))
-            rpcid = _rpcid(url) if "batchexecute" in url else None
-            if rpcid not in SUBMIT_RPCS or route_error.done():
+            if "batchexecute" not in url or route_error.done():
                 return
-            if expect_reference_ids:
-                problem = _r2v_body_problem(_post_data(request), rpcid, expect_reference_ids)
-            elif expect_media_id is not None:
-                problem = _i2v_body_problem(_post_data(request), rpcid, expect_media_id)
-            else:
+            # The URL `rpcids` param is the normal carrier and is tried first. The
+            # body fallback exists because the interpolation submit has been reported
+            # without that param; on the account measured 2026-09-17 it DID carry it
+            # (`nprQif` in the URL, key `omni_flash_i2v_8s_first_last`), so treat the
+            # body as a second carrier rather than the rule — cohorts differ here.
+            body = _post_data(request)
+            rpcid = _rpcid(url) or _body_rpcid(body)
+            # Record request rpcids too: at timeout the set shows both what went
+            # out and what answered (issue #639).
+            if rpcid is not None:
+                seen_submit_rpcs.add(rpcid)
+            if rpcid is None:
                 return
-            if problem is not None:
-                route_error.set_result(
-                    WireFormatError(detail=problem, route=f"batchexecute:{rpcid}")
-                )
+            if rpcid in SUBMIT_RPCS:
+                if rpcid == INTERPOLATION_SUBMIT_RPC:
+                    problem = _interpolation_body_problem(
+                        body, rpcid, expect_media_id, expect_end_media_id
+                    )
+                elif expect_reference_ids:
+                    problem = _r2v_body_problem(body, rpcid, expect_reference_ids)
+                elif expect_media_id is not None:
+                    problem = _i2v_body_problem(
+                        body,
+                        rpcid,
+                        expect_media_id,
+                        end_media_id=expect_end_media_id,
+                    )
+                else:
+                    return
+                if problem is not None:
+                    route_error.set_result(
+                        WireFormatError(detail=problem, route=f"batchexecute:{rpcid}")
+                    )
+                return
+            # An unwatched rpcid is RECORDED (`seen_submit_rpcs`, above) but never
+            # adopted as our submit. Adopting by body content was tried and removed:
+            # the predicate available here (`_i2v_body_problem`) requires `_i2v_` in
+            # the key, which `veo_3_1_interpolation_lite` does not contain — so it
+            # could never fire for the veo start+end case it was written for — while
+            # for the omni `*_i2v_*_first_last` key it matched broadly enough that any
+            # future rpc echoing composer state would be adopted, and a parse failure
+            # on an adopted id calls `submitted.set_exception` (fatal) rather than
+            # `continue`. That trades a named timeout for a hard failure on an
+            # already-billed run. Both submit rpcids we have measured — `eb1hJf`
+            # (start only) and `nprQif` (start+end, 2026-09-17) — are in SUBMIT_RPCS,
+            # so nothing needs adopting; a third one should be measured and added by
+            # name, not guessed at from a body.
 
         # ``terminal``: failed, or done WITH the signed URL. ``done_no_url``: the
         # first status-3 record that has no URL yet (a poll beats the result RPC).
@@ -2031,16 +2189,34 @@ class MigratedComposer:
             elif rec.is_done and not done_no_url.done():
                 done_no_url.set_result(rec)
 
+        # Every batchexecute rpcid seen while waiting for the submit reply. A
+        # start+end submit may answer on an rpcid this observer does not watch;
+        # recording the set turns an unknown-reply timeout from a mystery into a
+        # named fact (issue #639).
+        seen_submit_rpcs: set[str] = set()
+
         async def on_response(response: Any) -> None:
             url = str(getattr(response, "url", ""))
             rpcid = _rpcid(url) if "batchexecute" in url else None
-            if rpcid not in SUBMIT_RPCS and rpcid not in STATUS_RPCS:
+            if rpcid is not None:
+                seen_submit_rpcs.add(rpcid)
+            if "batchexecute" not in url:
+                return
+            # `rpcid is None` falls through on purpose: the interpolation reply is a
+            # bare `batchexecute` with no `rpcids` param, and `parse_frames` recovers
+            # its id from the frame itself (measured 2026-09-17).
+            if rpcid is not None and rpcid not in SUBMIT_RPCS and rpcid not in STATUS_RPCS:
                 return
             try:
                 text = await response.text()
             except Exception:  # noqa: BLE001 - an aborted/streamed body is not our frame
                 return
             for rid, payload in parse_frames(text):
+                # Record the id the FRAME names, not just the URL's. The interpolation
+                # reply arrives on a bare `batchexecute` with no `rpcids` param, so a
+                # URL-only diagnostic reports "rpcs seen: none" for the very reply shape
+                # whose absence it is trying to explain (#639).
+                seen_submit_rpcs.add(rid)
                 if rid in SUBMIT_RPCS and not submitted.done():
                     try:
                         rec = generation_record(rid, payload)
@@ -2068,11 +2244,15 @@ class MigratedComposer:
                     _settle(rec)
 
         page.on("response", on_response)
-        # Both body assertions live in `on_request`, so the listener must be armed for
-        # either. Gating it on `expect_media_id` alone left `_r2v_body_problem` unit-tested
-        # but never reached in a live run — the check the r2v path was built around.
-        if expect_media_id is not None or expect_reference_ids:
-            page.on("request", on_request)
+        # Every body assertion lives in `on_request`, so the listener must be armed for
+        # all of them. Gating it on `expect_media_id` alone left `_r2v_body_problem`
+        # unit-tested but never reached in a live run — the check the r2v path was built
+        # around. It is now ALWAYS armed, including for t2v, because the interpolation
+        # guard is a BILLING guard that only matters when nothing was asked for: a stale
+        # End chip makes the app submit `nprQif` on a run that requested no end frame,
+        # and refusing that is free while the generation is not. `on_request` returns
+        # early for a t2v submit it has nothing to assert about.
+        page.on("request", on_request)
         try:
             submit = page.locator("button").filter(has=_ligature(page, "arrow_forward")).first
             if not await submit.count():
@@ -2114,10 +2294,11 @@ class MigratedComposer:
                 # named as such and not as whatever the reply then says.
                 raise route_error.result()
             if not submitted.done():
+                seen = ", ".join(sorted(seen_submit_rpcs)) or "none"
                 raise TransportTimeoutError(
                     detail=(
                         f"migrated host: no {'/'.join(SUBMIT_RPCS)} reply within "
-                        f"{budget:.0f}s of clicking submit"
+                        f"{budget:.0f}s of clicking submit (rpcs seen: {seen})"
                     ),
                 )
             first = submitted.result()
@@ -2148,8 +2329,7 @@ class MigratedComposer:
             if submitted.done() and not submitted.cancelled():
                 submitted.exception()
             page.remove_listener("response", on_response)
-            if expect_media_id is not None or expect_reference_ids:
-                page.remove_listener("request", on_request)
+            page.remove_listener("request", on_request)
 
     async def submit_images_and_observe(
         self,
@@ -2383,30 +2563,28 @@ async def run_video(
     """The migrated-host twin of the labs ``_generate_video_locked`` tail: same
     inputs, same ``VideoResult``, so recorder, CLI, MCP and worker are untouched.
 
-    t2v, i2v from a local start frame (uploaded through the editor and bound on the
-    Start chip by file name), and r2v from local ``--ref`` files. An end frame and a
-    frame or reference given by UUID / ``@Name`` are not ported yet; a fresh project
-    can only be created through the labs gallery, so the caller must name one
-    (``--project``).
+    t2v, i2v from local start (and end) frames (uploaded through the editor and
+    bound on the Start/End chips by file name), and r2v from local ``--ref``
+    files. A frame or reference given by UUID / ``@Name`` is not ported yet. The
+    project is created by ``FlowApiClient`` before this runs (#864), so reaching
+    here without one means a caller bypassed the client.
     """
     unported = _unported_form(request)
     if unported is not None:
         raise FlowHostMigratedError(
             detail=(
                 f"this account's Flow lives on flow.google.com, where gflow drives "
-                f"text-to-video, image-to-video from a local start frame, and "
+                f"text-to-video, image-to-video from local start (and end) frames, and "
                 f"reference-to-video from local files; {unported} is not ported yet "
-                f"(#639) — pass --initial-frame / --ref as local files, without an "
-                f"end frame"
+                f"(#639) — pass --initial-frame / --ref as local files"
             ),
         )
     pid = project_id or extract_project_id(page.url)
     if not pid:
         raise ConfigurationError(
             detail=(
-                "generating on the migrated flow.google.com host needs an existing project: "
-                "pass --project <id> (see `gflow project list` / `gflow project create`) — "
-                "creating one from the editor is not ported to this host yet"
+                "generating on the migrated flow.google.com host needs a project: pass "
+                "--project <id> (see `gflow project list` / `gflow project create`)"
             ),
         )
     log.info("migrated.dispatch", project_id=pid, mode=request.mode.value)
@@ -2414,10 +2592,13 @@ async def run_video(
     await composer.ensure_editor(page, pid)
     await composer.apply_video_settings(page, request)
     media_id: str | None = None
+    end_media_id: str | None = None
     reference_ids: tuple[str, ...] = ()
     frame = request.start_image
     if request.mode is Mode.I2V and frame is not None:
         media_id = await composer.attach_start_frame(page, pid, frame)
+    if request.mode is Mode.I2V and request.end_image is not None:
+        end_media_id = await composer.attach_end_frame(page, pid, request.end_image)
     if request.mode is Mode.R2V and request.reference_images:
         reference_ids = await composer.attach_references(page, pid, request.reference_images)
     if request.reference_entities:
@@ -2450,6 +2631,7 @@ async def run_video(
         on_started=on_started,
         project_id=pid,
         expect_media_id=media_id,
+        expect_end_media_id=end_media_id,
         expect_reference_ids=reference_ids,
     )
     status = VideoStatus(
@@ -2514,3 +2696,141 @@ async def run_images(
         request,
         reference_ids=reference_ids,
     )
+
+
+# --- projects (#864) ---------------------------------------------------------------
+#
+# labs.google's `project.createProject` now answers 404 "Flow RPCs have been deprecated
+# and disabled" (401 for a session carrying no labs token) on every profile measured, so
+# a project is created and renamed here instead. Both operations were measured on
+# 2026-09-17 (docs/superpowers/spikes/2026-09-17-project-create-on-flow-google-com.md),
+# and both replies state the outcome, so success is read from the wire, not the URL.
+
+MIGRATED_ROOT_URL = "https://flow.google.com/"
+#: The projects page's floating `add` button — the page's only creation control.
+NEW_PROJECT_BUTTON = "flow-projects-page button:has(mat-icon:text-is('add'))"
+#: The project header's editable title.
+PROJECT_TITLE_INPUT = "flow-editable-text input"
+#: `["projects/*", [null, [title]], …]` -> `[project_id, [title]]`
+CREATE_PROJECT_RPC = "jHPbke"
+#: `["projects/<id>", [title], [["project_title"]], …]` -> `[title]`
+RENAME_PROJECT_RPC = "o8DA4"
+
+
+def _as_list_any(node: object) -> list[object]:
+    return cast("list[object]", node) if isinstance(node, list) else []
+
+
+async def _wait_anchor(
+    page: Page, selector: str, *, named: str, requested: str, at: str, timeout_s: float
+) -> Any:
+    locator = page.locator(selector).first
+    try:
+        await locator.wait_for(state="visible", timeout=int(timeout_s * 1000))
+    except PlaywrightTimeoutError as e:
+        await raise_if_known_landing(page, requested=requested, at=at)
+        raise UiSelectorDriftError(
+            detail=(
+                f"migrated host: the {named} ({selector}) did not become visible within "
+                f"{timeout_s:.0f}s on {safe_page_url(page.url)} (host=migrated)"
+            ),
+        ) from e
+    return locator
+
+
+async def _rpc_reply(
+    page: Page, rpcid: str, action: Callable[[], Awaitable[None]], *, timeout_s: float
+) -> Any:
+    """Run ``action`` and return the payload of the first ``rpcid`` frame the page gets."""
+    reply: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+
+    async def on_response(response: Any) -> None:
+        if reply.done() or "batchexecute" not in str(getattr(response, "url", "")):
+            return
+        try:
+            text = await response.text()
+        except Exception:  # noqa: BLE001 - an aborted body is not our frame
+            return
+        for rid, payload in parse_frames(text):
+            if rid == rpcid and not reply.done():
+                reply.set_result(payload)
+
+    page.on("response", on_response)
+    try:
+        await action()
+        try:
+            return await asyncio.wait_for(reply, timeout=timeout_s)
+        except TimeoutError as e:
+            raise TransportTimeoutError(
+                detail=(
+                    f"flow.google.com did not answer {rpcid} within {timeout_s:.0f}s "
+                    f"on {safe_page_url(page.url)} (host=migrated)"
+                ),
+            ) from e
+    finally:
+        page.remove_listener("response", on_response)
+
+
+async def create_project(page: Page, title: str, *, timeout_s: float = 30.0) -> ProjectInfo:
+    """Create a project through flow.google.com's projects page, titled ``title``.
+
+    Leaves ``page`` on the new project, which is where every caller goes next."""
+    await page.goto(MIGRATED_ROOT_URL, wait_until="domcontentloaded", timeout=45_000)
+    await MigratedComposer._dismiss_dialog(page)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    button = await _wait_anchor(
+        page,
+        NEW_PROJECT_BUTTON,
+        named="new-project button",
+        requested=MIGRATED_ROOT_URL,
+        at="migrated.create_project",
+        timeout_s=timeout_s,
+    )
+    payload = await _rpc_reply(
+        page, CREATE_PROJECT_RPC, lambda: button.click(timeout=15_000), timeout_s=timeout_s
+    )
+    reply = _as_list_any(payload)
+    project_id: object = reply[0] if reply else None
+    if not isinstance(project_id, str) or not UUID_RE.fullmatch(project_id):
+        raise WireFormatError(
+            detail=f"{CREATE_PROJECT_RPC} reply carried no project id: {str(payload)[:200]}",
+            route=f"batchexecute:{CREATE_PROJECT_RPC}",
+        )
+    log.info("migrated.project_created", project_id=project_id)
+    names = _as_list_any(reply[1]) if len(reply) > 1 else []
+    created: object = names[0] if names else None
+    if title and created != title:
+        await rename_project(page, project_id, title, timeout_s=timeout_s)
+        created = title
+    return ProjectInfo(project_id=project_id, title=str(created or ""))
+
+
+async def rename_project(
+    page: Page, project_id: str, title: str, *, timeout_s: float = 30.0
+) -> None:
+    """Rename a project through its header title on flow.google.com."""
+    target = MIGRATED_PROJECT_URL.format(project_id=project_id)
+    if not str(getattr(page, "url", "") or "").startswith(target):
+        await page.goto(target, wait_until="domcontentloaded", timeout=45_000)
+    await MigratedComposer._dismiss_dialog(page)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    field = await _wait_anchor(
+        page,
+        PROJECT_TITLE_INPUT,
+        named="project title input",
+        requested=target,
+        at="migrated.rename_project",
+        timeout_s=timeout_s,
+    )
+
+    async def submit() -> None:
+        await field.fill(title)
+        await field.press("Enter")
+
+    payload = await _rpc_reply(page, RENAME_PROJECT_RPC, submit, timeout_s=timeout_s)
+    echo = _as_list_any(payload)
+    echoed: object = echo[0] if echo else None
+    if echoed != title:
+        raise WireFormatError(
+            detail=f"{RENAME_PROJECT_RPC} echoed title {echoed!r}, expected {title!r}",
+            route=f"batchexecute:{RENAME_PROJECT_RPC}",
+        )
+    log.info("migrated.project_renamed", project_id=project_id)

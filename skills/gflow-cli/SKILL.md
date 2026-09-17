@@ -70,13 +70,13 @@ gflow image t2i "<prompt>" [--model {nano2|nano-pro|image4}] \
                             [-n 1..4] [--out DIR]
 gflow image i2i "<prompt>" --ref PATH_OR_UUID [--ref ...] [...same as t2i]
 gflow image batch <manifest.tsv|manifest.json> [-n 1..4] [--aspect ...] [--out DIR]  # shared project, up to 5 prompts
-# On migrated flow.google.com accounts (#639), t2i and i2i are ported for an
-# existing --project (required — exit 11 without it): i2i accepts local --ref
-# files only, aspects 16:9/4:3/1:1/9:16. UUIDs, @Name/entity references, Imagen 4
-# (image4), --aspect 3:4, and image batch are refused there with exit 36.
+# On migrated flow.google.com accounts (#639), t2i and i2i are ported (a project is
+# created when --project is omitted, #864): i2i accepts local --ref files only, all
+# five aspects. UUIDs, @Name/entity references, Imagen 4 (image4), and image batch
+# are refused there with exit 36.
 
 # Video generation (Veo 3.1)
-gflow video t2v "<prompt>" [--project ID] [--model ...] [--duration 4|6|8|10] [--out-dir DIR] [--aspect ...]  # --project required on the migrated flow.google.com host (#639); 10s is omni-flash-only
+gflow video t2v "<prompt>" [--project ID] [--model ...] [--duration 4|6|8|10] [--out-dir DIR] [--aspect ...]  # without --project a project is created first, on either host (#864); 10s is omni-flash-only
 gflow video i2v --initial-frame <image|media-UUID> "<prompt>" [--out-dir DIR] [...same as t2v]  # UUID = in-project asset, no re-upload (#287; pair with --project)
 # `gflow video` has no `batch` subcommand — that stub never worked and was
 # removed. For multi-clip runs, loop `gflow video t2v`/`i2v` from the shell.
@@ -107,7 +107,8 @@ gflow instructions apply FILE --project ID                # declarative full-syn
 gflow instructions toggle-mode (--on | --off) --project ID # toggle master agent switch
 
 # Keeping gflow-cli current (every command shows a banner when a newer release exists)
-gflow update [--check] [--json]                            # upgrades via uv tool / pipx / pip; source installs refused (exit 11)
+gflow update [--check] [--json]
+gflow docs [TOPIC] [--search TERM] [--json]                            # upgrades via uv tool / pipx / pip; source installs refused (exit 11)
 ```
 
 Every subcommand accepts `--profile <name>` (per-subcommand, not global) to drive multiple Google accounts side-by-side.
@@ -279,7 +280,7 @@ Documented errors agents commonly make — negative examples for the SkillOpt tr
 | `--model imagen` / `--model quality` / `--model high` | `--model image4` (Imagen 3.5), `--model nano-pro` (Gem Pix 2), `--model nano2` (Narwhal) |
 | Python: `client = FlowApiClient(...)` then method calls | Must use `async with FlowApiClient(...) as client:` — it's an async context manager |
 | Python: `from gflow_cli import FlowApiClient` | `from gflow_cli.api.client import FlowApiClient` |
-| `gflow video t2v`/`i2v`/`r2v` without `--project` on an account Google moved to `flow.google.com` (exit 11), or an unported UUID/entity reference or model (exit 36) | Pass `--project <id>` — migrated hosts support video t2v, local-file i2v/r2v, and image t2i/i2i (local refs) only; exit 36 is non-retryable, `GFLOW_CLI_FLOW_HOST=labs.google` is the kill switch (see USAGE § gflow video t2v / i2v / r2v and image sections) |
+| `gflow video t2v`/`i2v`/`r2v` with an unported UUID/entity reference or model on an account served `flow.google.com` (exit 36) | Pass local files instead — migrated hosts support video t2v, local-file i2v/r2v, and image t2i/i2i (local refs) only; exit 36 is non-retryable, `GFLOW_CLI_FLOW_HOST=labs.google` is the kill switch (see USAGE § gflow video t2v / i2v / r2v and image sections) |
 | Telling a user on `flow.google.com` whose run exits **25** to retry, switch profile or pass `--ui-mode classic` | Their account's composer is **agent-only** — no classic arm exists, so aspect/model/count are Agent-settings defaults and gflow has no driver for it (`retryable: false`, $0, pre-submit). Nothing in gflow reaches it; the Flow web UI still works ([#799](https://github.com/ffroliva/gflow-cli/issues/799)). Exit 25 on `labs.google` IS the retryable A/B cohort — check the host before advising |
 | Suggesting a native `batch` subcommand under `gflow video` | It doesn't exist — that stub never worked and was removed. Loop `gflow video t2v`/`i2v` from the shell for multi-clip runs (`gflow image batch manifest.tsv\|json` is the real, working batch command, but it's image-only) |
 

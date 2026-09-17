@@ -23,6 +23,7 @@ import asyncio
 import functools
 import time
 import uuid
+import weakref
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
@@ -92,6 +93,25 @@ class _TokenBucket:
 
 
 _rate_limiter = _TokenBucket()
+
+
+_profile_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, asyncio.Lock]] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _profile_lock(profile: str) -> asyncio.Lock:
+    """Serialize this server's browser work on one profile (#862).
+
+    Tool calls run in the server's own process, and a second same-process lease on a
+    profile fails fast by design (waiting on yourself would deadlock), so two calls
+    arriving together — a client retry, two agents on one server — must queue here.
+    Different profiles still run concurrently. Held per loop — weakly, so a finished
+    loop takes its locks with it — because an `asyncio.Lock` belongs to the loop that
+    first contends it, and a loop id can be reused once that loop is gone.
+    """
+    locks = _profile_locks.setdefault(asyncio.get_running_loop(), {})
+    return locks.setdefault(profile, asyncio.Lock())
 
 
 def _rate_limited_envelope() -> dict[str, Any]:
@@ -368,13 +388,14 @@ async def _run_generation_task(
         #    (shared with the daemon poll loop) is what guarantees this row is
         #    executed at most once. A None claim = invalid payload failed at
         #    claim time (no browser) or already taken; the read-back reports it.
-        worker = FlowWorker(profile_name=profile, db_path=str(db_path))
-        try:
-            claimed = worker.repo.claim_task(task_id, claimant=f"mcp:{profile}")
-            if claimed is not None:
-                await worker.process_task(claimed)
-        finally:
-            worker.close()
+        async with _profile_lock(profile):
+            worker = FlowWorker(profile_name=profile, db_path=str(db_path))
+            try:
+                claimed = worker.repo.claim_task(task_id, claimant=f"mcp:{profile}")
+                if claimed is not None:
+                    await worker.process_task(claimed)
+            finally:
+                worker.close()
 
         # 3. Read the final task state back.
         with DataStore.open(db_path) as store:
@@ -799,8 +820,8 @@ async def gflow_generate_image(
             ``GFLOW_CLI_PROFILE`` env var → ``config.toml`` default →
             auto-select if exactly one profile exists.
         project: Optional existing Flow project id to generate into (mirrors the
-            CLI ``--project`` flag). When omitted, a scratch project is created
-            as before.
+            CLI ``--project`` flag). When omitted, a fresh project is created —
+            on labs.google or flow.google.com, whichever serves the account.
         project_name: Optional human-readable project title to use when creating a
             fresh Flow project.
         instructions: Optional list of custom agent instructions to add or enable
@@ -1016,8 +1037,9 @@ async def gflow_generate_video(  # NOSONAR
             as ``hero-<8 hex>.png``), so a re-run of the same file cannot bind an
             earlier upload (#792); a Flow media UUID returns the
             exit-36-equivalent envelope.
-        end_frame: Path to end frame image (optional for i2v). Not ported to
-            flow.google.com yet — exit-36-equivalent envelope on a moved account.
+        end_frame: Path to end frame image (optional for i2v). Local files are
+            driven on flow.google.com; UUID/@Name refs return the
+            exit-36-equivalent envelope on a moved account.
         reference_images: List of reference image paths (ingredients) for r2v.
         reference_entities: Saved Flow CHARACTER entity **ids** to attach
             (mirrors the CLI ``--reference-entity``). Same wire as an
@@ -1057,13 +1079,13 @@ async def gflow_generate_video(  # NOSONAR
             auto-select if exactly one profile exists.
         project: Optional existing Flow project id to generate into (mirrors the
             CLI ``--project`` flag on ``video t2v``/``i2v``/``r2v``). When
-            omitted, a scratch project is created on labs.google. On an account
-            Google has moved to flow.google.com (``GFLOW_CLI_FLOW_HOST``, read from
-            the server/daemon environment, not per call) ``project`` is required —
-            omitting it returns the exit-11-equivalent envelope. There the ported
-            modes are 't2v'; 'i2v' with a local ``initial_frame`` and no
-            ``end_frame``; and 'r2v' with local ``reference_images``. A UUID
-            frame, an end frame, and r2v by ``ref_names`` or
+            omitted, a fresh project is created (titled ``project_name`` when
+            given) on labs.google or flow.google.com, whichever serves the
+            account. On an account served flow.google.com (``GFLOW_CLI_FLOW_HOST``,
+            read from the server/daemon environment, not per call) the ported
+            modes are 't2v'; 'i2v' with a local ``initial_frame`` with or without
+            a local ``end_frame``; and 'r2v' with local ``reference_images``. A UUID
+            frame, an end frame by UUID/``@Name``, and r2v by ``ref_names`` or
             ``reference_entities`` return the exit-36-equivalent envelope.
         ui_mode: Required Flow UI arm (mirrors the CLI ``--ui-mode`` on
             ``video t2v``/``i2v``; applies to every mode of this tool,
@@ -1258,7 +1280,8 @@ async def gflow_get_credits(
     resolved = _resolve_and_validate_profile(profile)
     if isinstance(resolved, dict):
         return resolved
-    return await inspect_credit_profile(resolved)
+    async with _profile_lock(resolved):
+        return await inspect_credit_profile(resolved)
 
 
 def _character_to_dict(char: Any) -> dict[str, Any]:
@@ -1311,10 +1334,13 @@ async def gflow_character_list(
         return resolved
 
     settings = get_settings()
-    async with FlowApiClient(
-        profile_dir=settings.profile_subdir(resolved),
-        headless=settings.headless,
-    ) as client:
+    async with (
+        _profile_lock(resolved),
+        FlowApiClient(
+            profile_dir=settings.profile_subdir(resolved),
+            headless=settings.headless,
+        ) as client,
+    ):
         chars = await client.list_characters(project)
 
     return {
@@ -1394,10 +1420,13 @@ async def gflow_character_show(
         return resolved
 
     settings = get_settings()
-    async with FlowApiClient(
-        profile_dir=settings.profile_subdir(resolved),
-        headless=settings.headless,
-    ) as client:
+    async with (
+        _profile_lock(resolved),
+        FlowApiClient(
+            profile_dir=settings.profile_subdir(resolved),
+            headless=settings.headless,
+        ) as client,
+    ):
         char = await client.get_character(project, entity_id=entity_id, name=name)
 
     return {"status": "ok", "project": project, "character": _character_to_dict(char)}
@@ -1674,7 +1703,10 @@ async def _run_instructions_op(
     profile_dir = settings.profile_subdir(resolved)
     log.info("mcp.tool.instructions", tool=tool, project=project, profile=resolved)
     try:
-        async with FlowApiClient(profile_dir=profile_dir, headless=settings.headless) as client:
+        async with (
+            _profile_lock(resolved),
+            FlowApiClient(profile_dir=profile_dir, headless=settings.headless) as client,
+        ):
             # ValueError is scoped to op() ONLY — brief.find (not-found /
             # ambiguous) and AgentInstruction invariants raise it with
             # user-facing messages built from the caller's own card data. A

@@ -21,6 +21,7 @@ from gflow_cli import auth as auth_mod
 from gflow_cli.cli_character import character as _character_group
 from gflow_cli.cli_credits import credits as _credits_group
 from gflow_cli.cli_data import data as _data_group
+from gflow_cli.cli_docs import docs as _docs_command
 from gflow_cli.cli_doctor import doctor as _doctor_command
 from gflow_cli.cli_image import image as _image_group
 from gflow_cli.cli_instructions import instructions as _instructions_group
@@ -491,6 +492,7 @@ main.add_command(_character_group)
 main.add_command(_credits_group)
 main.add_command(_data_group)
 main.add_command(_doctor_command)
+main.add_command(_docs_command)
 main.add_command(_update_command)
 main.add_command(_movie_group)
 main.add_command(_project_group)

@@ -4,6 +4,70 @@
 
 ## Current release
 
+**v0.78.0 — alpha.** Generating without a project works again on accounts Flow serves from
+`flow.google.com`, and the error that used to appear there is gone.
+
+**labs.google's project route is retired, and gflow was blaming the user's login (#864,
+closes #561).** Every path that omits a project — `gflow image t2i`/`i2i`, `video
+t2v`/`i2v`/`r2v`, `gflow project create`/`rename`, and the MCP twins — began by creating a
+scratch project through `labs.google/fx/api/trpc/project.createProject`. Google has disabled
+that route: it answers **404 "Flow RPCs have been deprecated and disabled. Flow has migrated
+to https://flow.google.com."** for a session holding a labs token, and **401** for one
+without. Measured 12/12 across four profiles. gflow rendered the 401 as *"Authentication
+expired — run `gflow auth login`"*, advice no login could act on, and #561 sat open for a
+month with a contributor's 401-then-200 measurement that no host-based theory could explain.
+
+gflow now creates the project **on flow.google.com** when the labs route refuses — keyed on
+that observed 401/404, never on which host an account is served, so the labs arm and
+`GFLOW_CLI_FLOW_HOST=labs.google` are untouched. Creation drives the projects page's `add`
+button and reads the new id and title out of Flow's own `jHPbke` reply; rename drives the
+project header and confirms the `o8DA4` reply echoes the title back. `generate_video` now
+creates the project up front exactly as `generate_image` already did, so every video route is
+decided with one in hand, and MCP `gflow_generate_video` honours `project_name`, which it had
+accepted and silently dropped.
+
+**An MCP server waits out profile contention instead of failing it.** Two calls on one profile
+inside one server now queue rather than the second dying with `ProfileLockedError`, and a
+profile held by another process is waited out for up to 180 s. Both halves came from
+reviewing a contributor PR that had the right goal and two defects: the default was applied
+after `gflow`'s root command had already cached settings (measured: env `180`, setting
+`0.0`), and same-process contention fails fast by design, so no wait value could have helped
+the case it was written for.
+
+**Video from a start frame works again on migrated accounts (#860).** The Frames picker
+renders a `mat-icon` ligature beside the file name, and a locator reads both nodes as one
+string -- so gflow's anchored match could never hold and every `video i2v --initial-frame`
+run on a `flow.google.com` account ended in exit 32, *"the frame picker lists no asset
+named ..."*, while the error's own diagnostic listed that asset with `image` glued to the
+front. Matching is now containment on the display name, which #792 already made
+run-unique. Flow's promo modal is also dismissed before the first click rather than only
+on load (#859).
+
+**`gflow video i2v --end-frame` runs on flow.google.com (#639).** Start+end interpolation
+was the last i2v form the migrated composer refused. Both frames are uploaded and bound,
+and the submit body is asserted before Flow acts on it -- a frame that failed to bind is
+now a refusal instead of a wrong generation you paid for. The interpolation model key is
+cohort-dependent and matched by shape.
+
+**`gflow docs` puts the documentation in the terminal (#861).** 126 pages lived in `docs/`
+and nothing in the CLI pointed at any of them. `gflow docs` lists the topics, `gflow docs
+<topic>` prints one as Markdown, and `gflow docs --search <term>` answers with
+`docs/FILE.md:LINE` **and the line**. The pages ship inside the wheel, so it works with no
+checkout and no network -- which is the whole point, since the reader who filed it
+installed from PyPI. The wheel grows 0.74 MB -> 1.32 MB.
+
+**`--aspect 3:4` images run on flow.google.com.** Flow's image settings render a fifth aspect
+radio that the 2026-09-08 enumeration did not have, so gflow had been refusing 3:4 with exit
+36. Re-measured; all five image aspects are driven. Video offers 16:9 and 9:16 only, which was
+already covered.
+
+Verified in `docs/LIVE_VERIFICATION_v0.78.0.md`. The project/aspect/MCP work was proven at
+**zero credits** -- five e2e tests drive both surfaces with every video submit intercepted
+before it reached Flow. **#860 was not**, and could not be: the only way to show that a
+start frame now binds is to let a real generation run, so ten clips were generated and
+downloaded on a live account. #859's dismissal path ran on every one of those runs, but no
+promo modal appeared, so it is recorded as unobserved rather than verified.
+
 **v0.77.1 — alpha.** A patch release: four fixes, and one of them made the package
 unusable on a clean Windows install.
 

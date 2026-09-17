@@ -25,7 +25,7 @@ from starlette.responses import PlainTextResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from gflow_cli import __version__
-from gflow_cli.config import get_settings
+from gflow_cli.config import get_settings, reset_settings
 from gflow_cli.mcp.tasks_extension import TasksExtension
 
 log = structlog.get_logger()
@@ -124,6 +124,28 @@ def _configure_utf8_pipes() -> None:
 # image generation is only *empirically* free ("~0 credits observed") and
 # no-spend must be a hard guarantee, so anything not contractually free is in.
 _SPEND_TOOLS = ("gflow_generate_image", "gflow_generate_video")
+
+
+#: How long a tool call waits for a profile another process holds (#862). A human at the
+#: CLI can retry a fail-fast `ProfileLockedError`; an MCP client has nobody to do that.
+MCP_LEASE_WAIT_SECONDS = "180"
+
+
+def _apply_mcp_lease_wait_default() -> None:
+    """Wait out cross-process profile contention unless the operator chose otherwise.
+
+    Must reset the settings cache: `gflow`'s root command has already loaded settings
+    before `mcp run` / `serve` reach here, so an environment default alone is read too
+    late (#862 shipped exactly that). A value from the environment OR a `.env` file is
+    the operator's choice and wins — including an explicit fail-fast `0`.
+
+    Same-process contention never waits (see `profile_lease`); calls inside this server
+    are serialized per profile in `mcp.tools` instead.
+    """
+    if "lease_wait_seconds" in get_settings().model_fields_set:
+        return
+    os.environ["GFLOW_CLI_LEASE_WAIT_SECONDS"] = MCP_LEASE_WAIT_SECONDS
+    reset_settings()
 
 
 def no_spend_active() -> bool:
@@ -304,6 +326,7 @@ async def run_stdio() -> None:
     import anyio
     from mcp.server.stdio import stdio_server
 
+    _apply_mcp_lease_wait_default()
     _configure_utf8_pipes()
 
     # Capture the REAL stdout for the JSON-RPC channel BEFORE redirecting
@@ -350,6 +373,7 @@ async def run_http(host: str = "127.0.0.1", port: int = 8000) -> None:
         host: Bind address. Defaults to localhost-only for security.
         port: Port number. Defaults to 8000.
     """
+    _apply_mcp_lease_wait_default()
     _configure_utf8_pipes()
 
     token = _daemon_token()
@@ -385,6 +409,7 @@ async def run_sse(host: str = "127.0.0.1", port: int = 8000) -> None:
         host: Bind address. Defaults to localhost-only for security.
         port: Port number. Defaults to 8000.
     """
+    _apply_mcp_lease_wait_default()
     _configure_utf8_pipes()
 
     token = _daemon_token()

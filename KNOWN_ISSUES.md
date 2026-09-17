@@ -16,7 +16,7 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 
 ### Flow is migrating to `flow.google.com`; generation coverage is partial but includes images
 
-- **Status:** Open (partially resolved) · **Severity:** High for unported forms · **Affected:** on accounts the rollout has reached, `gflow video t2v`, local-file `video i2v` / `r2v`, `gflow image t2i`, and local-file `gflow image i2i` now run on the migrated host. Image mode supports Nano Banana 2 / Pro, the four aspect ratios its radiogroup was enumerated with (16:9, 4:3, 1:1, 9:16), and count 1–4; `3:4` had no radio in that enumeration and is refused before submit rather than reported as selector drift. Image refs by UUID, `@Name` / `--reference-entity`, Agent instructions, Imagen 4, video end frames, video refs by UUID/name, scenes, extend, instructions and tools are not ported yet and fail before submit. **`character` is NOT in that list any more** — `character create` and `character list` work on the migrated host. Of the remainder, only the i2v-by-UUID case rests on a positive observation of absence (the Frames picker tiles carry no media id); `scenes`, `extend`, `instructions` and `tools` remain *unported by gflow*, never proven impossible on the host.
+- **Status:** Open (partially resolved) · **Severity:** High for unported forms · **Affected:** on accounts the rollout has reached, `gflow video t2v`, local-file `video i2v` / `r2v`, `gflow image t2i`, and local-file `gflow image i2i` now run on the migrated host. Image mode supports Nano Banana 2 / Pro, all five aspect ratios its radiogroup renders (16:9, 4:3, 1:1, 3:4, 9:16 — 3:4 appeared by 2026-09-17, #864), and count 1–4. Image refs by UUID, `@Name` / `--reference-entity`, Agent instructions, Imagen 4, video frame refs by UUID/name, scenes, extend, instructions and tools are not ported yet and fail before submit. **`character` is NOT in that list any more** — `character create` and `character list` work on the migrated host. Of the remainder, only the i2v-by-UUID case rests on a positive observation of absence (the Frames picker tiles carry no media id); `scenes`, `extend`, `instructions` and `tools` remain *unported by gflow*, never proven impossible on the host.
 - **Tracked:** [#639](https://github.com/ffroliva/gflow-cli/issues/639) · Reported 2026-09-02 against 0.59.0, 0.62.1, 0.63.0 and 0.65.0
 - **Confirmed live 2026-09-03 on a second, independent account** (`ffroliva`) — see [LIVE_VERIFICATION_v0.66.0](docs/LIVE_VERIFICATION_v0.66.0.md). A read-only probe of the migrated origin measured `i_total: 0`, reproducing the reporter's central measurement.
 - **`--reference-entity` was refused on `r2v` but not on `t2v`** ([#716](https://github.com/ffroliva/gflow-cli/issues/716), fixed in v0.71.0): the "not ported, exit 36" refusal above sat inside the r2v branch of the routing gate, so a `t2v` request carrying a character entity returned from that gate without its entities ever being inspected — and nothing downstream attaches one on this host. The generation was **submitted and billed** with the entity silently dropped, returning a plausible clip of the wrong person. The check is now mode-independent and ahead of every early return. If you ran `gflow video t2v @Name …` or `--reference-entity` on a moved account before this fix, the identity in those clips was never bound.
@@ -55,9 +55,8 @@ the clip). Two real clips were generated this way on 2026-09-05 — spike
 `docs/superpowers/spikes/2026-09-05-migrated-host-wire-protocol.md`. Routing
 (`GFLOW_CLI_FLOW_HOST=auto`): flow.google.com is the **default** host for that
 command on every account — moved or not; `flow.google.com` forces it for
-everything, and `labs.google` switches the migrated composer off. Limits today: `--project` is required (project creation from the
-migrated editor is not ported), and `t2v`, `i2v` from a local `--initial-frame` (no end frame,
-no UUID/`@Name` frame — the migrated Frames picker exposes no media id in its DOM, so a frame is
+everything, and `labs.google` switches the migrated composer off. Limits today: only `t2v`, `i2v` from local start (and end) frames (no UUID/`@Name` frame —
+the migrated Frames picker exposes no media id in its DOM, so a frame is
 found by the run-unique name gflow uploads it under, #792), and `r2v` from local `--ref` files
 (see the next paragraph), plus `image t2i` and local-file `image i2i` — unsupported
 forms still exit 36.
@@ -108,7 +107,7 @@ with the distinct, non-retryable exit 36 instead of the misleading
 `UiSelectorDriftError` (exit 23, "file a selector bug"). `_check_logged_in` also
 accepts the migrated host, so a migrated load is no longer misread as a
 logged-out session. The generation forms listed above and characters are driven;
-scenes, extend, instructions, tools, project creation, and the named reference/model
+scenes, extend, instructions, tools, and the named reference/model
 variants are the remaining work
 tracked here — no retry helps for those until each is ported.
 
@@ -1440,7 +1439,7 @@ key — surfaces as a `RuntimeError` that `auth/cookies.py` normalizes to
 
 - **Status:** Mitigated (crash → typed fail-fast rejection) · **Severity:** Low · **Affects:** all versions
 
-Chromium refuses to open two persistent contexts on the same `user-data-dir` simultaneously. Historically this surfaced as an unhelpful Chromium "ProcessSingleton: profile is locked" error partway through a run. As of the profile-lease hardening (production-readiness plan, slice D1/D3), gflow-cli enforces this itself: a cross-process advisory lock (`ProfileLease`, kernel `flock` on POSIX / `msvcrt.locking` on Windows) guards every profile directory. A second `gflow` invocation, `gflow serve` daemon task, or MCP call against an already-leased profile is rejected **immediately** by default — before any Chrome process starts — with a typed `ProfileLockedError` (**exit code 11**); it never silently corrupts the profile. Since #478, setting [`GFLOW_CLI_LEASE_WAIT_SECONDS`](docs/CONFIGURATION.md#gflow_cli_lease_wait_seconds) opts a waiter into a bounded wait that takes over as soon as the current holder finishes (holders always run to completion and are never asked to release early; same-process contention still fails fast — waiting on yourself would deadlock).
+Chromium refuses to open two persistent contexts on the same `user-data-dir` simultaneously. Historically this surfaced as an unhelpful Chromium "ProcessSingleton: profile is locked" error partway through a run. As of the profile-lease hardening (production-readiness plan, slice D1/D3), gflow-cli enforces this itself: a cross-process advisory lock (`ProfileLease`, kernel `flock` on POSIX / `msvcrt.locking` on Windows) guards every profile directory. A second `gflow` invocation, `gflow serve` daemon task, or MCP call against an already-leased profile is rejected **immediately** by default — before any Chrome process starts — with a typed `ProfileLockedError` (**exit code 11**); it never silently corrupts the profile. Since #478, setting [`GFLOW_CLI_LEASE_WAIT_SECONDS`](docs/CONFIGURATION.md#gflow_cli_lease_wait_seconds) opts a waiter into a bounded wait that takes over as soon as the current holder finishes (holders always run to completion and are never asked to release early; same-process contention still fails fast — waiting on yourself would deadlock). Since #864 an MCP server waits 180 s by default, and queues its own calls on one profile rather than rejecting the second.
 
 **Workaround:** use different profiles for parallel work — different profiles acquire independent leases and run fully concurrently.
 

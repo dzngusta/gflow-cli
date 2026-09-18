@@ -4,6 +4,54 @@
 
 ## Current release
 
+**v0.79.0 — alpha.** Two error paths stop asserting things nothing measured, and a billed
+asset that never downloaded can be fetched back for free.
+
+**`gflow data download <media_id>` recovers a stranded generation (#865, #871).** A run that
+finishes and bills, but whose signed URL is never observed, used to exit 7 with the credit
+spent, the clip sitting in the Flow project, and `local_path: null` in the catalog — and the
+only recovery on offer was to generate it again and pay twice. The command opens the clip's
+own route, takes the signed URL Flow reports, verifies the bytes against the size Flow
+records, and writes both the file and the `local_files` row. Costs nothing. Mirrored as
+`gflow_download_media`. **Video only, and it says so:** the signed URL comes from the `as29s`
+record a clip route emits, which an image's route does not carry. An image id is refused
+immediately with exit 11 instead of opening a browser and timing out after 45 s on three
+wrong guesses (#877).
+
+**Auth failures on aisandbox routes stop blaming a cookie they never read (#803).** The
+default remediation said *"SAPISID cookie missing, expired, or unreadable — re-run `gflow
+auth login`"*. v0.74.0 corrected the two `gflow credits` sites; the other three inherited the
+default, so `createScene`, `commitWorkflow`, `createEntity`, `projectInitialData`,
+`upsampleImage` and every other route through the shared retry helper still said it. None of
+them reads SAPISID — the credential is a Bearer token minted by labs' session endpoint, and
+SAPISID is what made that endpoint answer at all, so by the time these raise it has
+demonstrably just worked. The advice was also expensive: on a profile with no
+browser-strategy marker a failed re-login rolls the marker back and starts the #791 loop.
+Each site now names what was actually refused, and the 401 site names the route.
+
+**The migrated host stops reporting a model it never observed (#789).** `model_name_type`
+echoed the requested `--model` back on `flow.google.com`, where the `ogiZ0b` reply carries no
+model field at all. `recorder.py` persists it as `AssetRecord.model`, so `gflow data` read
+the echo back as though Flow had confirmed it — and with a hidden model picker (#788) the
+model actually selected can differ from the one requested, which makes the echo wrong on the
+one field that would reveal it. It is `null` on that host now. The request echo is unchanged:
+the envelope still reports what you asked for.
+
+**CI runs e2e tests for the first time.** Five `tests/e2e/` files are hermetic — every Flow
+origin served by `page.route().fulfill()`, so no account, profile, network or credits, only
+the Chromium the test job already installs. They are the regression tests for #593, #773,
+#859 and #860, and because `addopts` excludes `-m e2e` and no job overrode it they ran
+nowhere: a regression of any of those four would have gone green. 27 tests, ~4 min, behind a
+count guard so an empty run cannot pass as a green one.
+
+**Not verified here:** #803's corrected remediations are offline-tested only. Reaching them
+live needs Flow to answer an aisandbox route with a non-JSON body or a token-less session,
+and no profile available reaches that state — the labs tRPC route now refuses first with a
+404 (which is its own misleading-error bug, #875). Recorded as a blocker, not a pass. Full
+ledger: [LIVE_VERIFICATION_v0.79.0](LIVE_VERIFICATION_v0.79.0.md).
+
+<details><summary>v0.78.0 — generating without a project on flow.google.com</summary>
+
 **v0.78.0 — alpha.** Generating without a project works again on accounts Flow serves from
 `flow.google.com`, and the error that used to appear there is gone.
 
@@ -158,10 +206,13 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 </details>
 
+</details>
+
 ## Milestone history
 
 | Milestone | Status |
 |---|---|
+| A billed generation whose download failed can be fetched back for free instead of paid for twice — `gflow data download`, video only (#865/#871, image gap #877); and two error paths stop asserting what nothing measured: aisandbox auth failures stop blaming a SAPISID cookie no such route reads (#803), and the migrated host stops echoing the requested model back as though Flow had confirmed it (#789). CI runs e2e tests for the first time — five hermetic, route-intercepted files that had been excluded from every run | ✅ done (v0.79.0) |
 | A clean Windows install can run at all — `colorama` declared, so `ConsoleRenderer` stops aborting every interactive command before any subcommand body (#846); the sign-in window closes itself on a migrated account and a completed login stops being discarded unread as exit 12 (#849); `gflow update` detects a half-replaced install (#848); the migrated-host address scan goes linear (#852) | ✅ done (v0.77.1) |
 | An account with no Flow access is told so instead of being shown a selector-drift error and asked to file a bug — exit 39, read from the rendered unavailable screen rather than a URL or a status code (#833); the containerised sign-in works on Windows and pins its own version (#830); an MCP agent's `project_name` is finally consumed, found by a new AST gate on the MCP→worker payload keys (#628); the Official MCP Registry publishes itself on release via OIDC (#829) | ✅ done (v0.76.0) |
 | Every local file the migrated driver uploads is run-unique, so a re-run stops binding a stale look-alike, and the Frames picker is confirmed when it does not commit on the pick — covering `video i2v`, `video r2v` and `image i2i` alike (#792); `gflow credits` stops sending migrated accounts into a re-login loop at the raise site they actually hit (#795); an agent-only `flow.google.com` composer exits 25 `retryable: false` instead of 23 (#799) | ✅ done (v0.74.0) |

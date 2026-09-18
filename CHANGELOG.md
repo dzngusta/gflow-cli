@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gflow data download <media_id>` — recover a billed asset whose download failed.**
+  A generation that finishes but whose signed media URL is never observed exits 7 with
+  the credit already spent: the clip sits in the Flow project, the catalog row says
+  `local_path: null`, and no command could fetch it. The only recovery the CLI offered
+  was to generate it again and pay twice — and because the failure is a timing window,
+  the retry could strand another copy. The new command opens the clip's own route, takes
+  the signed URL Flow reports for it, verifies the bytes against the size Flow records,
+  writes the file and updates `local_files`. Costs no credits. Mirrored as the
+  `gflow_download_media` MCP tool.
+  ([#865](https://github.com/ffroliva/gflow-cli/issues/865),
+  [#871](https://github.com/ffroliva/gflow-cli/issues/871))
+
 ## [0.78.0] — 2026-09-17
 
 ### Added

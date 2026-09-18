@@ -56,6 +56,10 @@ CLI_TO_MCP: dict[str, str] = {
     "tools show": "gflow_list_tools",  # list output carries the show detail
     "auth status": "gflow_auth_status",
     "data list projects": "gflow_list_projects",
+    # Not "local catalog maintenance" like its `data` siblings: it drives a browser to
+    # recover an asset the user already paid for. An agent whose generation died at the
+    # download is stranded exactly as a CLI user is, so this one is NOT exempt (#865).
+    "data download": "gflow_download_media",
     "project list": "gflow_list_projects",
     "instructions list": "gflow_instructions_list",
     "instructions add": "gflow_instructions_add",

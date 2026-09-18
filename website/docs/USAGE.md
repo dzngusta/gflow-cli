@@ -1327,6 +1327,68 @@ Options:
   --dry-run             Preview dead rows without deleting.
   --profile NAME        Limit scan to a specific profile.
 
+## `gflow data download`
+
+Fetch an already-generated **video** from Flow by its media ID, for the case where the
+generation succeeded but its download did not.
+
+> **Video only.** The signed URL this needs comes from a record Flow emits when a clip's
+> own route loads, and an image's route does not carry one. An image media ID is refused
+> immediately with exit 11 and a message saying so — it does not open a browser or wait.
+> Tracked in [#877](https://github.com/ffroliva/gflow-cli/issues/877).
+
+That case is real and costs money: on `flow.google.com` a generation whose signed media
+URL is not observed within the grace window exits 7 (`WireFormatError`) **after the
+credit has been spent**. The clip is in the Flow project, the catalog has a row for it,
+and before this command there was no way to fetch it — the only recovery the CLI offered
+was to run the generation again and pay a second time.
+
+Recovering costs **nothing**. The asset was already billed.
+
+```text
+gflow data download MEDIA_ID [--out DIR] [--profile NAME] [--json]
+
+Arguments:
+  MEDIA_ID              Flow media UUID of the asset to fetch. [required]
+
+Options:
+  --out DIR             Directory to write into.
+                        Default: $GFLOW_CLI_OUTPUT_DIR.
+  --profile NAME        Scope the catalog lookup to a specific profile.
+                        Default: search all profiles.
+  --json                Emit a JSON summary instead of a table.
+```
+
+The command opens the clip's own route in Flow, takes the signed URL Flow reports for it,
+and **verifies the bytes against the size Flow records** before writing. That size check
+is not belt-and-braces: the same asset is also served as 360p and 720p re-encodes that
+carry valid MP4 magic bytes, so a magic-byte check alone would happily save the wrong
+file. A mismatch is an error, never a warning.
+
+On success the `local_files` row is written too, so `gflow data list videos` stops
+reporting `copy_count: 0` for an asset that is now on disk.
+
+**Example:**
+
+```text
+$ gflow data download 9ad33c78-5762-4cbc-bcbe-07a4c3b061c7
+          gflow data download
+┌────────────┬──────────────────────────────────────┐
+│ media_id   │ 9ad33c78-5762-4cbc-bcbe-07a4c3b061c7 │
+│ profile    │ ffroliva                             │
+│ project_id │ 339f65ee-fec3-436e-bdd1-fa2acdbf4afd │
+│ path       │ ./out/9ad33c78-....mp4               │
+│ bytes      │ 2702168                              │
+└────────────┴──────────────────────────────────────┘
+```
+
+Exits 16 when the catalog has no row for the media ID (or the ID exists under several
+profiles — pass `--profile` to disambiguate), and 7 when Flow does not report a usable
+media URL for it, which is also what you get for a clip that has been moved to trash.
+
+See [#865](https://github.com/ffroliva/gflow-cli/issues/865) and
+[#871](https://github.com/ffroliva/gflow-cli/issues/871).
+
 ## `gflow data media`
 
 Look up a recorded operation by its Flow media ID. Prints a summary of the stored provenance record: profile, media ID, Flow project ID, kind (image/video), and the local paths or cloud URIs that were written for that operation.
@@ -1637,6 +1699,11 @@ use. When set:
   `dimensions`, `fife_url`, `is_signed_url`) plus the on-disk `local_path`;
   `ref_count` is included on `i2i`. Single-prompt only — `--json` rejects
   multi-prompt batches with a Click usage error.
+  **`model_name_type` is `null` when Flow served the account from
+  `flow.google.com`** — that host's reply carries no model field, and gflow
+  reports what it observed rather than echoing your `--model` back (#789). It is
+  also `null` in the `model` column of `gflow data` for those assets. On
+  `labs.google` it is Flow's own value, e.g. `"NARWHAL"`.
 - `video t2v/i2v/r2v` emits the `VideoResult` (`status`, `command`, `media_id`,
   `generation_status`, `succeeded`, `local_path`, `failure_reasons`,
   `error_message`) plus the request echo (`model`, `mode`, `aspect`,

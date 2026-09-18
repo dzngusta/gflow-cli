@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.79.0] — 2026-09-18
+
+### Added
+
+- **`gflow data download <media_id>` — recover a billed asset whose download failed.**
+  A generation that finishes but whose signed media URL is never observed exits 7 with
+  the credit already spent: the clip sits in the Flow project, the catalog row says
+  `local_path: null`, and no command could fetch it. The only recovery the CLI offered
+  was to generate it again and pay twice — and because the failure is a timing window,
+  the retry could strand another copy. The new command opens the clip's own route, takes
+  the signed URL Flow reports for it, verifies the bytes against the size Flow records,
+  writes the file and updates `local_files`. Costs no credits. Mirrored as the
+  `gflow_download_media` MCP tool.
+  **Video only**, and it says so: the signed URL comes from the `as29s` record Flow emits
+  when a clip's own route loads, which an image's route does not carry. An image media id
+  is refused immediately with exit 11 rather than opening a browser
+  ([#877](https://github.com/ffroliva/gflow-cli/issues/877)).
+
+### Fixed
+
+- **Auth errors on aisandbox routes no longer blame a cookie they never read
+  (#803).** `AisandboxAuthError`'s default remediation said *"SAPISID cookie
+  missing, expired, or unreadable — re-run `gflow auth login`"*. v0.74.0 corrected
+  the two `gflow credits` sites, but the other three raise sites inherited that
+  default, so every route through `_run_with_aisandbox_retry` — `createScene`,
+  `commitWorkflow`, `createEntity`, `projectInitialData`, `upsampleImage` and the
+  rest — still said it. None of them reads SAPISID: the credential is a Bearer
+  token minted by labs' session endpoint, and SAPISID's only role is getting that
+  endpoint to answer at all. The advice was therefore wrong in every word, and
+  costly: on a profile with no browser-strategy marker a failed re-login rolls the
+  marker back and starts the #791 loop. Each site now states what was actually
+  rejected — a non-JSON reply is named as an interstitial, a token-less session is
+  named as the flow.google.com shape, and a 401 after refresh names the route that
+  refused it.
+- **The migrated host no longer reports a model it never observed (#789).**
+  `model_name_type` echoed the requested `--model` back on `flow.google.com`, where
+  the `ogiZ0b` reply carries no model field at all. `recorder.py` persists that
+  value as `AssetRecord.model`, so the echo was read back by `gflow data` as though
+  Flow had confirmed it — and with a hidden model picker (#788) the model actually
+  selected can differ from the one requested, making the echo wrong on the single
+  field a user would check to find out. It is now `null` on that host, and typed
+  `str | None`. On `labs.google` it is unchanged: Flow's own value, from Flow's own
+  reply.
+  ([#865](https://github.com/ffroliva/gflow-cli/issues/865),
+  [#871](https://github.com/ffroliva/gflow-cli/issues/871))
+
+- **`gflow data download` refuses an image immediately instead of blaming the project,
+  the trash and your prompt (#877).** Recovery is video-only: the signed URL comes from
+  the `as29s` record Flow emits when a clip's own route loads, and an image's route does
+  not carry one. The command accepted an image media id anyway, launched Chrome, waited
+  45 s, and then produced three guesses — wrong project, clip in trash, *"retry with a
+  simpler prompt text"* — for a condition the catalog row states outright, on a command
+  that has no prompt. It now checks `kind` before anything else and exits 11 saying
+  recovery is video-only. The CLI help, the `gflow_download_media` MCP description and
+  `docs/USAGE.md` all said "asset"; they now say video. The timeout message that remains
+  for a genuine video miss drops the inherited generation-payload remediation and
+  describes what to actually check.
+
 ## [0.78.0] — 2026-09-17
 
 ### Added
@@ -5469,7 +5527,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.78.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.79.0...HEAD
+[0.79.0]: https://github.com/ffroliva/gflow-cli/compare/v0.78.0...v0.79.0
 [0.78.0]: https://github.com/ffroliva/gflow-cli/compare/v0.77.1...v0.78.0
 [0.77.1]: https://github.com/ffroliva/gflow-cli/compare/v0.77.0...v0.77.1
 [0.77.0]: https://github.com/ffroliva/gflow-cli/compare/v0.76.0...v0.77.0

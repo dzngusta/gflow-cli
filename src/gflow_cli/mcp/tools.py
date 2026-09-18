@@ -54,6 +54,7 @@ from gflow_cli.profile_store import (
 )
 from gflow_cli.services.credits import inspect_all_profiles as inspect_all_credit_profiles
 from gflow_cli.services.credits import inspect_profile as inspect_credit_profile
+from gflow_cli.services.media_recovery import download_media
 from gflow_cli.worker import codec
 from gflow_cli.worker.daemon import FlowWorker
 from gflow_cli.worker.queue import QueueRepository
@@ -1433,6 +1434,54 @@ async def gflow_character_show(
 
 
 @server.tool(
+    name="gflow_download_media",
+    description=(
+        "Fetch an already-generated VIDEO from Flow by its media ID and write it to "
+        "disk. For a generation that finished and was billed but whose download failed "
+        "— the clip is in the Flow project and the local catalog shows no file for it. "
+        "Spends no credits: the generation was already paid for. The bytes are verified "
+        "against the size Flow reports before the file is written. Video only: an image "
+        "media ID is refused immediately (exit 11) because the signed URL this needs "
+        "comes from a record only a clip's route emits. See issue #877."
+    ),
+)
+@_guarded
+async def gflow_download_media(
+    media_id: str,
+    out_dir: str | None = None,
+    profile: str | None = None,
+) -> dict[str, Any]:
+    """Recover an already-generated asset by media id.
+
+    Args:
+        media_id: The Flow media ID, as shown by ``gflow_list_projects`` assets or the
+            catalog. This is the id a failed-download generation left behind.
+        out_dir: Directory to write into. Defaults to the configured output dir.
+        profile: Restrict the catalog lookup to one profile. Omit to search all —
+            an id present under several profiles is reported as an error naming them.
+
+    Returns:
+        Dict with the written ``path``, ``bytes``, ``media_id``, ``workflow_id``,
+        ``project_id`` and ``profile``.
+    """
+    log.info("mcp.tool.download_media", media_id=media_id, profile=profile)
+    result = await download_media(
+        media_id=media_id,
+        profile=profile,
+        out_dir=Path(out_dir) if out_dir else None,
+    )
+    return {
+        "status": "ok",
+        "media_id": result.media_id,
+        "workflow_id": result.workflow_id,
+        "profile": result.profile_name,
+        "project_id": result.project_id,
+        "path": str(result.path),
+        "bytes": result.bytes,
+    }
+
+
+@server.tool(
     name="gflow_list_projects",
     description=(
         "List all projects in the local gflow catalog. "
@@ -1997,6 +2046,7 @@ __all__ = [
     "gflow_generate_video",
     "gflow_list_tools",
     "gflow_list_projects",
+    "gflow_download_media",
     "gflow_auth_status",
     "gflow_instructions_list",
     "gflow_instructions_add",

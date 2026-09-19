@@ -18,6 +18,7 @@ from rich.table import Table
 
 from gflow_cli import __version__, profile_store
 from gflow_cli import auth as auth_mod
+from gflow_cli.cli_campaign import campaign as _campaign_group
 from gflow_cli.cli_character import character as _character_group
 from gflow_cli.cli_credits import credits as _credits_group
 from gflow_cli.cli_data import data as _data_group
@@ -31,6 +32,7 @@ from gflow_cli.cli_project import project as _project_group
 from gflow_cli.cli_run import run as _run_command
 from gflow_cli.cli_scene import scene as _scene_group
 from gflow_cli.cli_tools import tools as _tools_group
+from gflow_cli.cli_ugc import ugc as _ugc_group
 from gflow_cli.cli_update import update as _update_command
 from gflow_cli.cli_video import video as _video_group
 from gflow_cli.config import get_settings, warn_if_removed_gemini_key_set
@@ -488,6 +490,7 @@ def _resolve_or_prompt(default_for_first_run: str) -> str:
         )
 
 
+main.add_command(_campaign_group)
 main.add_command(_character_group)
 main.add_command(_credits_group)
 main.add_command(_data_group)
@@ -503,6 +506,7 @@ main.add_command(_run_command)
 main.add_command(_models_command)
 main.add_command(_scene_group)
 main.add_command(_tools_group)
+main.add_command(_ugc_group)
 
 
 # --- mcp --------------------------------------------------------------------

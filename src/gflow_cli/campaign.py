@@ -254,11 +254,12 @@ class CampaignRunner:
                     payload = {"prompt": prompt}
                 else:
                     url = f"https://api.cloudflare.com/client/v4/accounts/{cf_account}/ai/run"
+                    quality = getattr(self.spec, "still_quality", "high")
                     payload = {
                         "model": model,
                         "input": {
                             "prompt": prompt,
-                            "quality": "max",
+                            "quality": quality,
                         },
                     }
 
